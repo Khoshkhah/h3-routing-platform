@@ -53,6 +53,9 @@ class SpatialIndex:
             raise FileNotFoundError(f"Edge CSV not found: {self.edges_csv_path}")
         
         df = pd.read_csv(self.edges_csv_path)
+        if 'id' not in df.columns and 'edge_index' in df.columns:
+            df = df.rename(columns={'edge_index': 'id'})
+            
         required_cols = ['id', 'geometry']
         missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:

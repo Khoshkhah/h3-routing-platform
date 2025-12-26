@@ -299,16 +299,19 @@ async def compute_route(
     end_lat: Optional[float] = Query(None, description="Legacy: end latitude"),
     end_lng: Optional[float] = Query(None, description="Legacy: end longitude"),
     dataset: str = Query(..., description="Dataset name"),
-    search_mode: str = Query("knn", description="Search mode: 'knn', 'radius', or 'one_to_one'"),
-    num_candidates: int = Query(3, description="Number of candidate edges (for knn mode)", ge=1, le=10),
-    search_radius: float = Query(100.0, description="Search radius in meters (for radius mode)", ge=10.0, le=10000.0)
+    search_mode: str = Query("knn", description="Search mode: 'knn', 'one_to_one', or 'one_to_one_v2'"),
+    num_candidates: int = Query(3, description="Number of candidates for KNN", ge=1, le=10),
+    search_radius: float = Query(2000.0, description="Search radius in meters", ge=10.0, le=10000.0)
 ):
-    """Compute shortest path between two points using candidate edge search."""
+    """
+    Compute a route between Source and Target.
+    Delegates to the C++ routing engine.
+    """
     if dataset not in registry.list_datasets():
         return RouteResponse(success=False, error=f"Dataset not found: {dataset}")
     
-    if search_mode not in ['knn', 'radius', 'one_to_one', 'one_to_one_v2']:
-        return RouteResponse(success=False, error="search_mode must be 'knn', 'radius', 'one_to_one', or 'one_to_one_v2'")
+    if search_mode not in ['knn', 'one_to_one', 'one_to_one_v2']:
+        return RouteResponse(success=False, error="search_mode must be 'knn', 'one_to_one', or 'one_to_one_v2'")
     
     try:
         # Resolve coordinate parameters: prefer current names, fall back to legacy names

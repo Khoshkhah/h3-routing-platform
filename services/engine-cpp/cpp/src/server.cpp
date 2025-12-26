@@ -77,7 +77,10 @@ json build_geojson(const Dataset& ds, const std::vector<uint32_t>& path) {
 double calculate_distance_meters(const Dataset& ds, const std::vector<uint32_t>& path) {
     double total = 0.0;
     for (uint32_t edge_id : path) {
-        total += ds.graph.get_edge_cost(edge_id);  // Assuming cost is in meters
+        const EdgeMeta* meta = ds.graph.get_edge_meta(edge_id);
+        if (meta) {
+            total += meta->length;
+        }
     }
     return total;
 }
@@ -102,7 +105,105 @@ json build_cell_info(uint64_t cell) {
     };
 }
 
-// Load dataset by name
+// Helper: Point struct
+struct Point { double lat, lon; };
+
+// Helper: Squared distance
+double distSq(Point p1, Point p2) {
+    double dLat = p1.lat - p2.lat;
+    double dLon = p1.lon - p2.lon;
+    return dLat*dLat + dLon*dLon;
+}
+
+// Helper: Project point onto segment
+Point project_on_segment(Point p, Point a, Point b) {
+    double l2 = distSq(a, b);
+    if (l2 == 0) return a;
+    double t = ((p.lat - a.lat) * (b.lat - a.lat) + (p.lon - a.lon) * (b.lon - a.lon)) / l2;
+    t = std::max(0.0, std::min(1.0, t));
+    return {a.lat + t * (b.lat - a.lat), a.lon + t * (b.lon - a.lon)};
+}
+
+// Helper: Trim GeoJSON coordinates based on start/end points
+json trim_geojson_coords(const json& original_coords, double start_lat, double start_lon, double end_lat, double end_lon) {
+    if (!original_coords.is_array() || original_coords.empty()) return original_coords;
+    
+    std::vector<Point> points;
+    for (const auto& p : original_coords) {
+        points.push_back({p[1], p[0]}); // GeoJSON is [lon, lat]
+    }
+    
+    if (points.size() < 2) return original_coords;
+    
+    // Trim Start
+    Point start_target = {start_lat, start_lon};
+    size_t start_idx = 0;
+    Point new_start = points[0];
+    double min_start_dist = -1.0;
+    
+    // Look at first few segments (e.g. first 50 points or full first edge)
+    // Since we don't know edge boundaries here, we scan until we find a reasonable projection?
+    // Actually, simply finding the closest point on the ENTIRE path might be risky (loops).
+    // Let's assume the user is near the START of the path.
+    // Scan first 100 segments or 10% of path?
+    size_t scan_limit = std::min((size_t)100, points.size() - 1);
+    
+    for (size_t i = 0; i < scan_limit; ++i) {
+        Point p = project_on_segment(start_target, points[i], points[i+1]);
+        double d = distSq(start_target, p);
+        if (min_start_dist < 0 || d < min_start_dist) {
+            min_start_dist = d;
+            new_start = p;
+            start_idx = i;
+        }
+    }
+    
+    // Trim End
+    Point end_target = {end_lat, end_lon};
+    size_t end_idx = points.size() - 1;
+    Point new_end = points.back();
+    double min_end_dist = -1.0;
+    
+    size_t end_scan_start = (points.size() > 100) ? points.size() - 100 : 0;
+    // ensure end_scan_start is after start_idx? Not strictly necessary if path is long.
+    
+    for (size_t i = end_scan_start; i < points.size() - 1; ++i) {
+        Point p = project_on_segment(end_target, points[i], points[i+1]);
+        double d = distSq(end_target, p);
+        if (min_end_dist < 0 || d < min_end_dist) {
+            min_end_dist = d;
+            new_end = p;
+            end_idx = i; // Segment index
+        }
+    }
+    
+    // Rebuild coords
+    json new_coords = json::array();
+    
+    // Start Point
+    new_coords.push_back({new_start.lon, new_start.lat});
+    
+    // Middle Points
+    // We keep points from start_idx + 1 up to end_idx
+    // If start_idx == end_idx, we just add start and end points (segment replacement)
+    for (size_t i = start_idx + 1; i <= end_idx; ++i) {
+         if (i < points.size()) { // endpoint of segment i-1 is points[i]
+             // Wait, segment i is points[i] to points[i+1].
+             // We want to keep vertices BETWEEN the cut points.
+             // If we cut segment 0 at t=0.5. We output new_start.
+             // Next vertex is points[1].
+             new_coords.push_back({points[i].lon, points[i].lat});
+         }
+    }
+    
+    // End Point
+    // Check if new_end is different from last added point to avoid duplicates?
+    // For simplicity, just add it.
+    new_coords.push_back({new_end.lon, new_end.lat});
+    
+    return new_coords;
+}
+
 bool load_dataset(const std::string& name, const std::string& shortcuts_path, const std::string& edges_path) {
     std::cout << "Loading dataset '" << name << "'...\n";
     
@@ -516,6 +617,13 @@ int main(int argc, char* argv[]) {
                 // Timing: Build GeoJSON
                 auto t_geojson_start = std::chrono::high_resolution_clock::now();
                 auto geojson = build_geojson(*ds, expanded_path);
+                
+                // Trim GeoJSON to match query coordinates
+                if (geojson != nullptr && geojson.contains("geometry")) {
+                    auto trimmed = trim_geojson_coords(geojson["geometry"]["coordinates"], start_lat, start_lng, end_lat, end_lng);
+                    geojson["geometry"]["coordinates"] = trimmed;
+                }
+                
                 auto t_geojson_end = std::chrono::high_resolution_clock::now();
                 double geojson_us = std::chrono::duration<double, std::micro>(t_geojson_end - t_geojson_start).count();
                 

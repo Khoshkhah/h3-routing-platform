@@ -59,7 +59,10 @@ class NetworkBuilder:
             lambda row: (row['source'], row['target']),
             axis=1
         )
-        self.edge_id_df = edges_df.reset_index()[['id', 'index']]
+
+        self.edge_id_df = edges_df.reset_index()
+        self.edge_id_df['index'] = self.edge_id_df["index"] +1
+        self.edge_id_df = self.edge_id_df[['id', 'index']]
         
         edges_df = edges_df[[
             "source", "target", "length", "maxspeed", "geometry", "highway"
@@ -77,7 +80,54 @@ class NetworkBuilder:
             columns=['id', 'geometry']
         ).set_index('id')
         
+        # Fix geometry direction: ensure geometry starts at source node
+        self._fix_geometry_directions()
+        
         return self.edges_df, self.nodes_df
+    
+    def _fix_geometry_directions(self):
+        """Reverse geometry if it doesn't start at the source node."""
+        from shapely.geometry import LineString, Point
+        from shapely import wkt
+        
+        def fix_row(row):
+            geom = row['geometry']
+            if geom is None:
+                return geom
+            
+            # Parse geometry if it's a string
+            if isinstance(geom, str):
+                try:
+                    geom = wkt.loads(geom)
+                except:
+                    return row['geometry']
+            
+            if not isinstance(geom, LineString) or len(geom.coords) < 2:
+                return row['geometry']
+            
+            # Get source node location
+            source_id = row['source']
+            if source_id not in self.nodes_df.index:
+                return row['geometry']
+            
+            source_point = self.nodes_df.loc[source_id, 'geometry']
+            if source_point is None:
+                return row['geometry']
+            
+            # Get first point of geometry
+            geom_start = Point(geom.coords[0])
+            
+            # Compare (with small tolerance for floating point)
+            tolerance = 1e-6
+            if abs(geom_start.x - source_point.x) > tolerance or \
+               abs(geom_start.y - source_point.y) > tolerance:
+                # Geometry is backwards - reverse it
+                return LineString(list(geom.coords)[::-1])
+            
+            return geom
+        
+        tqdm.pandas(desc="Fixing geometry directions")
+        self.edges_df['geometry'] = self.edges_df.progress_apply(fix_row, axis=1)
     
     def process_speeds(self, highway_col='highway'):
         """Process speed limits in edges."""

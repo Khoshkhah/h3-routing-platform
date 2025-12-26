@@ -4,14 +4,14 @@
 # Input Configuration
 input:
   district: "Burnaby"
-  edges_file: "/home/kaveh/projects/osm-to-road/data/output/Burnaby/Burnaby_driving_simplified_edges_with_h3.csv"
-  graph_file: "/home/kaveh/projects/osm-to-road/data/output/Burnaby/Burnaby_driving_edge_graph.csv"
+  edges_file: "/home/kaveh/projects/h3-routing-platform/tools/osm-importer/data/output/Burnaby/Burnaby_driving_simplified_edges_with_h3.csv"
+  graph_file: "/home/kaveh/projects/h3-routing-platform/tools/osm-importer/data/output/Burnaby/Burnaby_driving_edge_graph.csv"
 
 # Output Configuration  
 output:
-  directory: "/home/kaveh/projects/road-to-shortcut-duckdb/output"
+  directory: "/home/kaveh/projects/h3-routing-platform/tools/shortcut-generator/output"
   shortcuts_file: "Burnaby_shortcuts"
-  persist_dir: "/home/kaveh/projects/road-to-shortcut-duckdb/persist"
+  persist_dir: "/home/kaveh/projects/h3-routing-platform/tools/shortcut-generator/persist"
 
 # Algorithm Configuration
 algorithm:

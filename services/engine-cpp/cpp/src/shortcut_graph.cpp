@@ -132,21 +132,51 @@ bool ShortcutGraph::load_edge_metadata(const std::string& path) {
     std::string header_line;
     std::getline(file, header_line);  // Read header
     
-    // Detect format by checking if header starts with "source" or "length"
-    bool has_source_target = (header_line.find("source") != std::string::npos && 
-                              header_line.find("source") < 10);
+    // Parse header to find column indices
+    std::vector<std::string> cols;
+    std::stringstream ss(header_line);
+    std::string cell;
+    while (std::getline(ss, cell, ',')) {
+        // Trim whitespace, CR, quotes
+        cell.erase(0, cell.find_first_not_of(" \t\r\n\"'")); // Left trim
+        cell.erase(cell.find_last_not_of(" \t\r\n\"'") + 1); // Right trim
+        cols.push_back(cell);
+    }
     
-    // Column indices based on format
-    // burnaby edge_index,length,maxspeed,geometry,highway,cost,to_cell,from_cell,lca_res
-    // somerset edge_index,length,maxspeed,geometry,highway,cost,to_cell,from_cell,lca_res
-
-    int idx_length = 1;
-    int idx_geometry = 3;
-    int idx_cost = 5;
-    int idx_to_cell = 6;
-    int idx_from_cell = 7;
-    int idx_lca_res = 8;
-    int idx_id = 0;
+    std::cout << "DEBUG: CSV Headers: ";
+    for (const auto& c : cols) std::cout << "'" << c << "' ";
+    std::cout << std::endl;
+    
+    int idx_length = -1;
+    int idx_geometry = -1;
+    int idx_cost = -1;
+    int idx_to_cell = -1;
+    int idx_from_cell = -1;
+    int idx_lca_res = -1;
+    int idx_id = -1;
+    
+    for (int i = 0; i < (int)cols.size(); ++i) {
+        if (cols[i] == "length") idx_length = i;
+        else if (cols[i] == "geometry") idx_geometry = i;
+        else if (cols[i] == "cost") idx_cost = i;
+        else if (cols[i] == "incoming_cell" || cols[i] == "from_cell") idx_from_cell = i; // Note: csv has incoming/outgoing
+        else if (cols[i] == "outgoing_cell" || cols[i] == "to_cell") idx_to_cell = i; // Mapping varies?
+        else if (cols[i] == "lca_res") idx_lca_res = i;
+        else if (cols[i] == "id" || cols[i] == "edge_index") idx_id = i;
+    }
+    
+    // Fallback if ID is missing (assume 0 if not found, but better to fail)
+    if (idx_id == -1) idx_id = 0; // Legacy assumption? Or fatal error.
+    
+    // If incoming/outgoing names differ:
+    // CSV Header: length,maxspeed,geometry,highway,cost,incoming_cell,outgoing_cell,lca_res,id
+    // Code mappings:
+    if (idx_from_cell == -1) {
+        for (int i=0; i<(int)cols.size(); ++i) if (cols[i] == "incoming_cell") idx_from_cell = i; 
+    }
+    if (idx_to_cell == -1) {
+        for (int i=0; i<(int)cols.size(); ++i) if (cols[i] == "outgoing_cell") idx_to_cell = i;
+    }
     int min_cols = 9;
     
     edge_meta_.clear();
@@ -271,7 +301,14 @@ QueryResult ShortcutGraph::query_classic(uint32_t source_edge, uint32_t target_e
     constexpr double INF = std::numeric_limits<double>::infinity();
     
     if (source_edge == target_edge) {
-        return {get_edge_cost(source_edge), {source_edge}, true};
+        return {get_edge_cost(source_edge), {source_edge}, true, ""};
+    }
+
+    if (edge_meta_.find(source_edge) == edge_meta_.end()) {
+        return {-1, {}, false, "Source edge " + std::to_string(source_edge) + " not found in graph"};
+    }
+    if (edge_meta_.find(target_edge) == edge_meta_.end()) {
+        return {-1, {}, false, "Target edge " + std::to_string(target_edge) + " not found in graph"};
     }
     
     std::unordered_map<uint32_t, double> dist_fwd, dist_bwd;
@@ -370,7 +407,7 @@ QueryResult ShortcutGraph::query_classic(uint32_t source_edge, uint32_t target_e
         }
     }
     
-    if (!found) return {-1, {}, false};
+    if (!found) return {-1, {}, false, "No path found between source and target"};
     
     // Reconstruct path - use iterators to avoid inserting default values
     std::vector<uint32_t> path;
@@ -394,14 +431,21 @@ QueryResult ShortcutGraph::query_classic(uint32_t source_edge, uint32_t target_e
         path.push_back(curr);
     }
     
-    return {best, path, true};
+    return {best, path, true, ""};
 }
 
 QueryResult ShortcutGraph::query_pruned(uint32_t source_edge, uint32_t target_edge) const {
     constexpr double INF = std::numeric_limits<double>::infinity();
     
     if (source_edge == target_edge) {
-        return {get_edge_cost(source_edge), {source_edge}, true};
+        return {get_edge_cost(source_edge), {source_edge}, true, ""};
+    }
+    
+    if (edge_meta_.find(source_edge) == edge_meta_.end()) {
+        return {-1, {}, false, "Source edge " + std::to_string(source_edge) + " not found in graph"};
+    }
+    if (edge_meta_.find(target_edge) == edge_meta_.end()) {
+        return {-1, {}, false, "Target edge " + std::to_string(target_edge) + " not found in graph"};
     }
     
     HighCell high = compute_high_cell(source_edge, target_edge);
@@ -552,7 +596,7 @@ QueryResult ShortcutGraph::query_pruned(uint32_t source_edge, uint32_t target_ed
         }
     }
     
-    if (!found) return {-1, {}, false};
+    if (!found) return {-1, {}, false, "No path found between source and target (pruned)"};
     
     // Reconstruct path - use iterators to avoid inserting default values
     std::vector<uint32_t> path;
@@ -576,7 +620,7 @@ QueryResult ShortcutGraph::query_pruned(uint32_t source_edge, uint32_t target_ed
         path.push_back(curr);
     }
     
-    return {best, path, true};
+    return {best, path, true, ""};
 }
 
 QueryResult ShortcutGraph::query_multi(
@@ -916,7 +960,10 @@ std::vector<uint32_t> ShortcutGraph::expand_path(const std::vector<uint32_t>& sh
         
         // Base edge check: via_edge equals to_edge means it's a direct edge
         // We also check via == u to prevent infinite recursion on self-loops
-        if (via == v || via == u) {
+        // Base edge check: via equal to source/target means loop or invalid (if 0 was treated as edge)
+        // User requested removing via == 0 check to allow expansion through edge 0
+        if (via == u || via == v) {
+            // Base edge (via equals source/target)
             return {u, v};
         }
         

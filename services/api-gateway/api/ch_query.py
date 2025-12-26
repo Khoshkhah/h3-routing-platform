@@ -78,6 +78,11 @@ class CHQueryEngine:
         """
         Compute route using the routing server's full stack (NN + CH).
         """
+        # For one-to-one, we strictly want the best match (1 candidate)
+        # to ensure deterministic behavior matching the C++ engine's direct query
+        if search_mode == "one_to_one":
+            num_candidates = 1
+            
         try:
             payload = {
                 "dataset": self.dataset_name,
@@ -98,9 +103,14 @@ class CHQueryEngine:
             )
             t1 = time.time()
             client_side_ms = (t1 - t0) * 1000.0
-            
+
+            if response.status_code != 200:
+                logger.error(f"Routing server returned {response.status_code}")
+                return QueryResult(success=False, error=f"Server returned {response.status_code}")
+
             data = response.json()
             
+            # Check for explicit errors from server
             if not data.get("success", False):
                 return QueryResult(success=False, error=data.get("error", "Unknown server error"))
             

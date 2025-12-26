@@ -205,16 +205,12 @@ html_code = f"""
             <div style="padding: 10px; border-bottom: 1px solid #ddd;">
                 <label style="font-size: 12px; color: #666; display: block; margin-bottom: 5px;">Search Mode</label>
                 <select id="search-mode" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
-                    <option value="radius">Radius</option>
                     <option value="knn">KNN (K-Nearest)</option>
                     <option value="one_to_one">One-to-One (Classic)</option>
                     <option value="one_to_one_v2">One-to-One (v2)</option>
                 </select>
             </div>
-            <div style="padding: 10px; border-bottom: 1px solid #ddd;" id="radius-container">
-                <label style="font-size: 12px; color: #666; display: block; margin-bottom: 5px;">Search Radius (m)</label>
-                <input type="number" id="search-radius" value="500" min="50" max="2000" step="50" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
-            </div>
+            <!-- Radius Container Removed -->
             <div style="padding: 10px; border-bottom: 1px solid #ddd;" id="knn-container" style="display: none;">
                 <label style="font-size: 12px; color: #666; display: block; margin-bottom: 5px;">K (Number of Candidates)</label>
                 <input type="number" id="num-candidates" value="5" min="1" max="20" step="1" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
@@ -336,7 +332,7 @@ html_code = f"""
             // Get selected parameters
             const dataset = document.getElementById('dataset-selector').value;
             const searchMode = document.getElementById('search-mode').value;
-            const searchRadius = document.getElementById('search-radius').value;
+            const searchRadius = 2000; // Hardcoded default
             const numCandidates = document.getElementById('num-candidates').value;
 
             // Prepare query parameters for routing-pipeline Python API (GET)
@@ -679,14 +675,11 @@ html_code = f"""
         // --- 6. SEARCH MODE CHANGE HANDLER ---
         document.getElementById('search-mode').addEventListener('change', function() {{
             const mode = this.value;
-            const radiusContainer = document.getElementById('radius-container');
             const knnContainer = document.getElementById('knn-container');
             
-            if (mode === 'radius' || mode === 'one_to_one' || mode === 'one_to_one_v2') {{
-                radiusContainer.style.display = 'block';
+            if (mode === 'one_to_one' || mode === 'one_to_one_v2') {{
                 knnContainer.style.display = 'none';
             }} else {{
-                radiusContainer.style.display = 'none';
                 knnContainer.style.display = 'block';
             }}
             
@@ -695,7 +688,6 @@ html_code = f"""
         }});
 
         // --- 7. PARAMETER CHANGE HANDLERS ---
-        document.getElementById('search-radius').addEventListener('change', onDrag);
         document.getElementById('num-candidates').addEventListener('change', onDrag);
 
         // Initial Call

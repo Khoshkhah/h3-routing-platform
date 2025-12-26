@@ -30,6 +30,7 @@ struct QueryResult {
     double distance;              ///< Total path cost
     std::vector<uint32_t> path;   ///< Sequence of edge IDs
     bool reachable;               ///< True if a path was found
+    std::string error;            ///< Error description if not reachable
 };
 
 /**

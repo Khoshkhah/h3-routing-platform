@@ -217,8 +217,7 @@ def run_partitioned_parallel(cfg):
             CAST(from_edge AS INT) AS from_edge,
             CAST(to_edge AS INT) AS to_edge,
             cost,
-            -- Set via_edge=0 for base edges (inside=-2) so expand_path stops correctly
-            CAST(CASE WHEN inside = -2 THEN 0 ELSE via_edge END AS INT) AS via_edge,
+            CAST(via_edge AS INT) AS via_edge,
             CAST(inside AS TINYINT) AS inside,
             h3_parent(outer_cell, LEAST(lca_in, lca_out)::INTEGER) AS cell
         FROM with_inside

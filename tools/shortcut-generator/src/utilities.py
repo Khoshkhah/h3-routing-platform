@@ -379,23 +379,16 @@ def merge_shortcuts(con: duckdb.DuckDBPyConnection) -> None:
         SELECT from_edge, to_edge, cost, via_edge FROM shortcuts_next
     """)
     
-    # Use window function with ORDER BY same as Spark
+    # Use arg_min to get via_edge from row with minimum cost
     con.execute("""
         CREATE OR REPLACE TABLE shortcuts AS
-        SELECT from_edge, to_edge, cost, via_edge 
-        FROM (
-            SELECT 
-                from_edge, 
-                to_edge, 
-                cost, 
-                via_edge,
-                ROW_NUMBER() OVER (
-                    PARTITION BY from_edge, to_edge 
-                    ORDER BY cost ASC, via_edge ASC
-                ) as rank
-            FROM shortcuts_merged
-        )
-        WHERE rank = 1
+        SELECT 
+            from_edge, 
+            to_edge, 
+            min(cost) as cost, 
+            arg_min(via_edge, cost) as via_edge
+        FROM shortcuts_merged
+        GROUP BY from_edge, to_edge
     """)
     
     con.execute("DROP TABLE shortcuts_merged")
@@ -406,7 +399,6 @@ def add_final_info(con: duckdb.DuckDBPyConnection) -> None:
     Finalize 'shortcuts' table: add 'cell' and 'inside'.
     Filters invalid shortcuts.
     Casts to C++-compatible types: INT for edge IDs, TINYINT for inside.
-    Sets via_edge=0 for base edges (inside=-2) so expand_path stops correctly.
     """
     con.execute("""
         CREATE OR REPLACE TABLE shortcuts_final AS
@@ -440,7 +432,7 @@ def add_final_info(con: duckdb.DuckDBPyConnection) -> None:
             CAST(from_edge AS INT) AS from_edge,
             CAST(to_edge AS INT) AS to_edge,
             cost,
-            CAST(CASE WHEN inside = -2 THEN 0 ELSE via_edge END AS INT) AS via_edge,
+            CAST(via_edge AS INT) AS via_edge,
             CAST(inside AS TINYINT) AS inside,
             h3_parent(outer_cell, CAST(LEAST(lca_in, lca_out) AS INTEGER)) AS cell
         FROM with_inside
