@@ -5,7 +5,7 @@ This project is a high-performance **Contraction Hierarchy (CH)** routing engine
 ```mermaid
 graph TD
     subgraph "1. Offline Data Generation"
-        OSM[OpenStreetMap Data] -->|osm-to-road| Graph[Road Graph (Edges/Nodes)]
+        OSM[OpenStreetMap Data] -->|osm-to-road| Graph["Road Graph (Edges/Nodes)"]
         Graph -->|road-to-shortcut-duckdb| Shortcuts[Shortcuts (Parquet)]
         Graph -->|road-to-shortcut-duckdb| Meta[Edge Metadata (CSV)]
     end
