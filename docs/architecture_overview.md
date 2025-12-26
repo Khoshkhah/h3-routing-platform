@@ -6,13 +6,13 @@ This project is a high-performance **Contraction Hierarchy (CH)** routing engine
 graph LR
     subgraph "1. Offline Data Generation"
         OSM[OpenStreetMap Data] -->|osm-to-road| Graph["Road Graph (Edges/Nodes)"]
-        Graph -->|road-to-shortcut-duckdb| Shortcuts[Shortcuts (Parquet)]
-        Graph -->|road-to-shortcut-duckdb| Meta[Edge Metadata (CSV)]
+        Graph -->|road-to-shortcut-duckdb| Shortcuts["Shortcuts (Parquet)"]
+        Graph -->|road-to-shortcut-duckdb| Meta["Edge Metadata (CSV)"]
     end
 
     subgraph "2. C++ Routing Backend :8082"
-        ServerCPP[Routing Server (C++)]
-        Algorithm[CH Algorithm (Bi-Dijkstra)]
+        ServerCPP["Routing Server (C++)"]
+        Algorithm["CH Algorithm (Bi-Dijkstra)"]
         Expander[Path Expander]
         
         Shortcuts -->|Load| ServerCPP
