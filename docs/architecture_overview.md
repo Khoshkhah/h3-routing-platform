@@ -3,7 +3,7 @@
 This project is a high-performance **Contraction Hierarchy (CH)** routing engine designed for efficient pathfinding on large road networks. It consists of three main layers: Data Generation, Routing Engine (C++), and Application Layer (Python/UI).
 
 ```mermaid
-graph TD
+graph LR
     subgraph "1. Offline Data Generation"
         OSM[OpenStreetMap Data] -->|osm-to-road| Graph["Road Graph (Edges/Nodes)"]
         Graph -->|road-to-shortcut-duckdb| Shortcuts[Shortcuts (Parquet)]
