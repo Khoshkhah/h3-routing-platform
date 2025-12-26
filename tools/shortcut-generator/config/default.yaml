@@ -1,0 +1,40 @@
+# Default configuration for shortcut generation
+# ============================================
+# This file defines the default settings. Copy and modify for custom runs.
+
+# Input Configuration
+input:
+  edges_file: "/home/kaveh/projects/osm-to-road/data/output/{district}/{district}_driving_simplified_edges_with_h3.csv"
+  graph_file: "/home/kaveh/projects/osm-to-road/data/output/{district}/{district}_driving_edge_graph.csv"
+  district: "Burnaby"
+
+# Output Configuration
+output:
+  directory: "output"
+  shortcuts_file: "{district}_shortcuts"
+  persist_dir: "persist"
+
+# Algorithm Configuration
+algorithm:
+  name: "partitioned"  # Options: "partitioned", "hybrid", "pure", "scipy"
+  sp_method: "SCIPY"   # Options: "SCIPY", "PURE", "HYBRID"
+  hybrid_res: 10       # For HYBRID: PURE for res >= hybrid_res, SCIPY for res < hybrid_res
+  partition_res: 7     # Resolution for Phase 1 chunking
+  min_res: 0           # Minimum H3 resolution
+  max_res: 15          # Maximum H3 resolution
+
+# DuckDB Configuration
+duckdb:
+  memory_limit: "12GB"
+  threads: null        # null = auto-detect
+  fresh_start: false   # If true, delete existing DB before running
+
+# Parallel Execution Configuration
+parallel:
+  workers: 1           # 1 = single-threaded, >1 = parallel with N workers
+  workers_phase1: 10   # Override for Phase 1
+  workers_phase4: 2    # Override for Phase 4
+# Logging Configuration
+logging:
+  level: "INFO"        # Options: "INFO", "DEBUG", "WARNING", "ERROR"
+  verbose: true        # If true, print more verbose output

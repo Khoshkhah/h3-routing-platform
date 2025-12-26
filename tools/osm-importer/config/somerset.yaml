@@ -1,0 +1,4 @@
+name: "Somerset"
+pbf_path: "data/maps/Somerset.osm.pbf"
+output_dir: "data/output/Somerset"
+

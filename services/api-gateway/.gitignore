@@ -1,0 +1,26 @@
+# Build artifacts
+build/
+*.o
+*.obj
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Data files
+*.csv
+*.parquet
+*.pbf
+data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

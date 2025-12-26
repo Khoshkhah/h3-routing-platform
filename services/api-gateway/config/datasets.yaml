@@ -1,0 +1,43 @@
+# Dataset Configuration
+# Define available datasets with paths to shortcuts, edges, and query binary
+
+datasets:
+  - name: "somerset"
+    shortcuts_path: "/home/kaveh/projects/h3-routing-platform/tools/shortcut-generator/output/Somerset_shortcuts"
+    edges_path: "/home/kaveh/projects/h3-routing-platform/tools/osm-importer/data/output/Somerset/Somerset_driving_simplified_edges_with_h3.csv"
+    boundary_path: "/home/kaveh/projects/h3-routing-platform/tools/osm-importer/data/boundaries/Somerset.geojson"
+    binary_path: "/home/kaveh/projects/h3-routing-platform/services/engine-cpp/cpp/build/routing_server"
+    center: [37.07, -84.61]
+    zoom: 13
+    short_name: "Somerset"
+    description: "Somerset, Kentucky, USA"
+  
+  - name: "burnaby"
+    shortcuts_path: "/home/kaveh/projects/h3-routing-platform/tools/shortcut-generator/output/Burnaby_shortcuts"
+    edges_path: "/home/kaveh/projects/h3-routing-platform/tools/osm-importer/data/output/Burnaby/Burnaby_driving_simplified_edges_with_h3.csv"
+    boundary_path: "/home/kaveh/projects/h3-routing-platform/tools/osm-importer/data/boundaries/burnaby.geojson"
+    binary_path: "/home/kaveh/projects/h3-routing-platform/services/engine-cpp/cpp/build/routing_server"
+    center: [49.25, -122.95]
+    zoom: 13
+    short_name: "Burnaby"
+    description: "Burnaby, British Columbia, Canada"
+
+  - name: "all_vancouver"
+    shortcuts_path: "/home/kaveh/projects/h3-routing-platform/tools/shortcut-generator/output/All_Vancouver_shortcuts"
+    edges_path: "/home/kaveh/projects/h3-routing-platform/tools/osm-importer/data/output/All_Vancouver/All_Vancouver_driving_simplified_edges_with_h3.csv"
+    boundary_path: "/home/kaveh/projects/h3-routing-platform/tools/osm-importer/data/boundaries/metro_vancouver_regional_district.geojson"
+    binary_path: "/home/kaveh/projects/h3-routing-platform/services/engine-cpp/cpp/build/routing_server"
+    center: [49.25, -123.00]
+    zoom: 12
+    short_name: "Metro Vancouver"
+    description: "all Vancouver, British Columbia, Canada"
+
+  - name: "vancouver"
+    shortcuts_path: "/home/kaveh/projects/h3-routing-platform/tools/shortcut-generator/output/Vancouver_City_shortcuts"
+    edges_path: "/home/kaveh/projects/h3-routing-platform/tools/osm-importer/data/output/Vancouver_City/Vancouver_City_driving_simplified_edges_with_h3.csv"
+    boundary_path: "/home/kaveh/projects/h3-routing-platform/tools/osm-importer/data/boundaries/vancouver.geojson"
+    binary_path: "/home/kaveh/projects/h3-routing-platform/services/engine-cpp/cpp/build/routing_server"
+    center: [49.25, -123.12]
+    zoom: 12
+    short_name: "Vancouver City"
+    description: "Vancouver proper, British Columbia, Canada"

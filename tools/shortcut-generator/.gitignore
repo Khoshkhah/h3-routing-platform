@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+dist/
+build/
+eggs/
+.eggs/
+
+# Virtual Environment
+venv/
+.venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# DuckDB
+*.db
+*.db.wal
+persist/*.db
+persist/*.db.wal
+
+# Logs
+logs/*.log
+
+# Output files
+output/*
+!output/.gitkeep
+
+# Persist/data files
+persist/*.parquet
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Archive notebooks
+archive/*.ipynb

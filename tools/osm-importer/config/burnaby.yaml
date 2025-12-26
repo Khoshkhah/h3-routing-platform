@@ -1,0 +1,3 @@
+name: "Burnaby"
+pbf_path: "data/maps/burnaby.osm.pbf"
+output_dir: "data/output/Burnaby"

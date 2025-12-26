@@ -1,0 +1,35 @@
+# Somerset dataset configuration
+# ==============================
+
+# Input Configuration
+input:
+  district: "Somerset"
+  edges_file: "/home/kaveh/projects/osm-to-road/data/output/Somerset/Somerset_driving_simplified_edges_with_h3.csv"
+  graph_file: "/home/kaveh/projects/osm-to-road/data/output/Somerset/Somerset_driving_edge_graph.csv"
+
+# Output Configuration
+output:
+  directory: "/home/kaveh/projects/road-to-shortcut-duckdb/output"
+  shortcuts_file: "Somerset_shortcuts"
+  persist_dir: "/home/kaveh/projects/road-to-shortcut-duckdb/persist"
+
+# Algorithm Configuration
+algorithm:
+  sp_method: "HYBRID"  # SCIPY, PURE, HYBRID
+  hybrid_res: 10       # For HYBRID: PURE for res >= 10, SCIPY for res < 10
+  partition_res: 7
+
+# Parallel Execution
+parallel:
+  workers: 10          # 1 = single-threaded, >1 = parallel with N workers
+
+# DuckDB Configuration
+duckdb:
+  memory_limit: "16GB"
+  threads: null        # null = auto-detect
+  fresh_start: True   # If true, delete existing DB before running
+
+# Logging Configuration
+logging:
+  level: "INFO"        # Options: "INFO", "DEBUG", "WARNING", "ERROR"
+  verbose: True        # If true, print more verbose output

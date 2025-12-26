@@ -1,0 +1,576 @@
+"""
+Streamlit web application for interactive shortest path visualization.
+
+This app provides:
+- Interactive map with click-to-select source/destination
+- Dataset selector for different regions
+- Real-time route computation and visualization
+- Statistics display (distance, runtime)
+"""
+
+import logging
+from typing import Optional, Tuple
+
+import folium
+import requests
+import streamlit as st
+from streamlit_folium import st_folium
+
+# Page config - MUST be first Streamlit command
+st.set_page_config(
+    page_title="Routing Pipeline - Interactive Map",
+    page_icon="🗺️",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# API configuration
+try:
+    API_BASE_URL = st.secrets.get("api_url", "http://localhost:8000")
+except:
+    API_BASE_URL = "http://localhost:8000"
+
+# Custom CSS
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        font-weight: bold;
+        background: linear-gradient(90deg, #0066cc, #00cc99);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.5rem;
+    }
+    .subtitle {
+        font-size: 1.1rem;
+        color: #666;
+        margin-bottom: 2rem;
+    }
+    .info-box {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 1.5rem;
+        border-radius: 1rem;
+        margin: 1rem 0;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    .stat-card {
+        background-color: white;
+        padding: 1.5rem;
+        border-radius: 0.8rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        border-left: 4px solid #0066cc;
+        margin: 0.5rem 0;
+    }
+    .stat-label {
+        font-weight: 600;
+        color: #666;
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .stat-value {
+        font-size: 2rem;
+        font-weight: bold;
+        color: #0066cc;
+        margin-top: 0.3rem;
+    }
+    .stat-unit {
+        font-size: 1rem;
+        color: #999;
+        font-weight: normal;
+    }
+    .success-badge {
+        background-color: #10b981;
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 2rem;
+        font-weight: bold;
+        display: inline-block;
+        margin: 0.5rem 0;
+    }
+    .step-indicator {
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border-left: 3px solid #0066cc;
+        margin: 0.5rem 0;
+    }
+    /* Ensure map container displays properly */
+    .stFolium {
+        width: 100% !important;
+    }
+    iframe {
+        border-radius: 0.5rem;
+    }
+    /* Floating control panel overlay */
+    .floating-panel {
+        position: fixed;
+        top: 20px;
+        left: 20px;
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        z-index: 1000;
+        max-width: 350px;
+    }
+    .floating-stats {
+        position: fixed;
+        bottom: 20px;
+        left: 20px;
+        background: white;
+        padding: 12px 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        z-index: 1000;
+        font-size: 0.9rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+
+def fetch_datasets():
+    """Fetch available datasets from API."""
+    try:
+        response = requests.get(f"{API_BASE_URL}/datasets", timeout=5)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        logger.error(f"Failed to fetch datasets: {e}")
+        return []
+
+
+def fetch_route(source_lat: float, source_lon: float, target_lat: float, target_lon: float, 
+                dataset: str, search_mode: str = "radius", search_radius: int = 150, 
+                num_candidates: int = 5):
+    """Fetch route from API."""
+    try:
+        params = {
+            "source_lat": source_lat,
+            "source_lon": source_lon,
+            "target_lat": target_lat,
+            "target_lon": target_lon,
+            "dataset": dataset,
+            "search_mode": search_mode,
+            "search_radius": search_radius,
+            "num_candidates": num_candidates
+        }
+        response = requests.get(f"{API_BASE_URL}/route", params=params, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        logger.error(f"Failed to fetch route: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def create_map(center: Tuple[float, float], zoom: int = 13):
+    """Create a Folium map with multiple tile options."""
+    # Validate center coordinates
+    lat, lon = center[1], center[0]
+    if lat == 0 and lon == 0:
+        # Default to somewhere visible if no center provided
+        lat, lon = 49.25, -122.95
+    
+    m = folium.Map(
+        location=[lat, lon],  # Folium uses (lat, lon)
+        zoom_start=zoom,
+        tiles="OpenStreetMap",
+        control_scale=True,
+        prefer_canvas=True,
+        max_bounds=True
+    )
+    
+    # Add multiple tile layers
+    folium.TileLayer(
+        tiles='CartoDB positron',
+        name='Light Map',
+        control=True
+    ).add_to(m)
+    
+    folium.TileLayer(
+        tiles='CartoDB dark_matter',
+        name='Dark Map',
+        control=True
+    ).add_to(m)
+    
+    # Add layer control
+    folium.LayerControl().add_to(m)
+    
+    return m
+
+
+def add_route_to_map(m: folium.Map, geojson: dict, color: str = "#0066cc"):
+    """Add route GeoJSON to map."""
+    if not geojson or "features" not in geojson:
+        return
+    
+    for feature in geojson["features"]:
+        coords = feature["geometry"]["coordinates"]
+        # Convert from (lon, lat) to (lat, lon) for Folium
+        folium_coords = [(lat, lon) for lon, lat in coords]
+        
+        edge_id = feature["properties"].get("edge_id", "")
+        highway = feature["properties"].get("highway", "unknown")
+        length = feature["properties"].get("length", 0)
+        
+        folium.PolyLine(
+            folium_coords,
+            color=color,
+            weight=4,
+            opacity=0.8,
+            popup=f"Edge {edge_id}<br>Type: {highway}<br>Length: {length:.1f}m"
+        ).add_to(m)
+
+
+def main():
+    """Main application."""
+    
+    # Hide Streamlit UI elements for clean map view
+    st.markdown("""
+        <style>
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
+        .stDeployButton {display:none;}
+        </style>
+    """, unsafe_allow_html=True)
+    
+    # Minimal sidebar for settings
+    with st.sidebar:
+        st.markdown("### ⚙️ Settings")
+        
+        datasets = fetch_datasets()
+        if not datasets:
+            st.error("⚠️ API unavailable")
+            st.stop()
+        
+        dataset_names = [ds["name"] for ds in datasets]
+        selected_dataset_name = st.selectbox("Dataset", dataset_names, label_visibility="collapsed")
+        selected_dataset = next(ds for ds in datasets if ds["name"] == selected_dataset_name)
+        
+        st.markdown("---")
+        
+        search_mode = st.radio("Mode", ["radius", "knn"], horizontal=True)
+        
+        if search_mode == "radius":
+            search_radius = st.slider("Radius (m)", 50, 500, 150, 50)
+            num_candidates = 5
+        else:
+            search_radius = 150
+            num_candidates = st.slider("K", 1, 15, 5)
+        
+        st.markdown("---")
+        
+        if st.button("🔄 Clear", use_container_width=True):
+            for key in ['source', 'target', 'route', 'last_click']:
+                if key in st.session_state:
+                    st.session_state[key] = None
+            st.rerun()
+    
+    # Initialize session state
+    if 'source' not in st.session_state:
+        st.session_state.source = None
+    if 'target' not in st.session_state:
+        st.session_state.target = None
+    if 'route' not in st.session_state:
+        st.session_state.route = None
+    
+    # Get map center from dataset
+    if selected_dataset.get("center"):
+        center = tuple(selected_dataset["center"])  # (lon, lat)
+    else:
+        center = (0, 0)
+    
+    # Create map
+    m = create_map(center, zoom=13)
+    
+    # Add draggable markers using FeatureGroup to track positions
+    fg = folium.FeatureGroup(name="markers")
+    
+    # Add source marker (draggable)
+    if st.session_state.source:
+        folium.Marker(
+            location=[st.session_state.source[0], st.session_state.source[1]],
+            popup="Source (drag to move)",
+            tooltip="Drag to move source",
+            icon=folium.Icon(color="green", icon="play"),
+            draggable=True
+        ).add_to(fg)
+    
+    # Add target marker (draggable)
+    if st.session_state.target:
+        folium.Marker(
+            location=[st.session_state.target[0], st.session_state.target[1]],
+            popup="Destination (drag to move)",
+            tooltip="Drag to move destination",
+            icon=folium.Icon(color="red", icon="stop"),
+            draggable=True
+        ).add_to(fg)
+    
+    fg.add_to(m)
+    
+    # Add route if computed
+    if st.session_state.route and st.session_state.route.get("success"):
+        # Draw route with gradient or different colors for visualization
+        add_route_to_map(m, st.session_state.route["geojson"], color="#0066cc")
+        
+        # Add distance labels at start and end if available
+        if st.session_state.route.get("distance"):
+            distance_km = st.session_state.route["distance"] / 1000
+            folium.Marker(
+                location=[st.session_state.source[0], st.session_state.source[1]],
+                popup=f"Start<br>Distance: {distance_km:.2f} km",
+                icon=folium.DivIcon(html=f'''
+                    <div style="background-color: #10b981; color: white; padding: 5px 10px; 
+                                border-radius: 15px; font-weight: bold; font-size: 12px;">
+                        START
+                    </div>
+                ''')
+            ).add_to(m)
+            
+            folium.Marker(
+                location=[st.session_state.target[0], st.session_state.target[1]],
+                popup=f"End<br>Distance: {distance_km:.2f} km",
+                icon=folium.DivIcon(html=f'''
+                    <div style="background-color: #ef4444; color: white; padding: 5px 10px; 
+                                border-radius: 15px; font-weight: bold; font-size: 12px;">
+                        END
+                    </div>
+                ''')
+            ).add_to(m)
+    
+    # Full-screen map
+    map_data = st_folium(
+        m,
+        height=950,
+        key="map",
+        returned_objects=["last_clicked", "last_object_clicked", "all_drawings"]
+    )
+    
+    # Control and stats section below map
+    st.markdown("---")
+    
+    # Display current selection and controls
+    col_info, col_stats = st.columns(2)
+    
+    with col_info:
+        st.subheader("📍 Selected Points")
+        if st.session_state.source:
+            st.success(f"✅ Source: {st.session_state.source[0]:.6f}, {st.session_state.source[1]:.6f}")
+        else:
+            st.info("Click map to select source point")
+        
+        if st.session_state.target:
+            st.success(f"✅ Destination: {st.session_state.target[0]:.6f}, {st.session_state.target[1]:.6f}")
+        else:
+            st.info("Click map to select destination point")
+            # Track previous positions to detect changes
+            if 'prev_source' not in st.session_state:
+                st.session_state.prev_source = st.session_state.source
+            if 'prev_target' not in st.session_state:
+                st.session_state.prev_target = st.session_state.target
+            
+            # Check if markers were dragged by examining last_object_clicked
+            if map_data.get("last_object_clicked"):
+                obj = map_data["last_object_clicked"]
+                if obj and "lat" in obj and "lng" in obj:
+                    new_pos = (obj["lat"], obj["lng"])
+                    
+                    # Determine which marker was dragged based on which is closer
+                    if st.session_state.source and st.session_state.target:
+                        source_dist = abs(st.session_state.source[0] - obj["lat"]) + abs(st.session_state.source[1] - obj["lng"])
+                        target_dist = abs(st.session_state.target[0] - obj["lat"]) + abs(st.session_state.target[1] - obj["lng"])
+                        
+                        # Update the closer one
+                        if source_dist < target_dist and source_dist < 0.1:
+                            if new_pos != st.session_state.source:
+                                st.session_state.source = new_pos
+                                st.session_state.route = None
+                                st.session_state.auto_compute = True
+                                st.session_state.prev_source = new_pos
+                                st.rerun()
+                        elif target_dist < 0.1:
+                            if new_pos != st.session_state.target:
+                                st.session_state.target = new_pos
+                                st.session_state.route = None
+                                st.session_state.auto_compute = True
+                                st.session_state.prev_target = new_pos
+                                st.rerun()
+                    elif st.session_state.source:
+                        source_dist = abs(st.session_state.source[0] - obj["lat"]) + abs(st.session_state.source[1] - obj["lng"])
+                        if source_dist < 0.1 and new_pos != st.session_state.source:
+                            st.session_state.source = new_pos
+                            st.session_state.prev_source = new_pos
+                            st.rerun()
+            
+            # Handle new clicks to place markers
+            elif map_data.get("last_clicked"):
+                clicked = map_data["last_clicked"]
+                lat, lon = clicked["lat"], clicked["lng"]
+                
+                # Store last clicked position to avoid duplicate processing
+                if 'last_click' not in st.session_state:
+                    st.session_state.last_click = None
+                
+                current_click = (lat, lon)
+                
+                # Only process if this is a new click
+                if current_click != st.session_state.last_click:
+                    st.session_state.last_click = current_click
+                    
+                    if st.session_state.source is None:
+                        st.session_state.source = current_click
+                        st.rerun()
+                    elif st.session_state.target is None:
+                        st.session_state.target = current_click
+                        # Auto-compute route when both points are set
+                        st.session_state.auto_compute = True
+                        st.rerun()
+    
+    with col_stats:
+        st.subheader("📊 Route Statistics")
+        
+        # Auto-compute route when both points are set
+        if st.session_state.source and st.session_state.target:
+            # Check if we need to compute (new points or auto_compute flag)
+            if 'auto_compute' not in st.session_state:
+                st.session_state.auto_compute = False
+            
+            # Add manual recompute button for when dragging doesn't trigger
+            if st.button("🔄 Update Route", use_container_width=True, type="secondary"):
+                st.session_state.auto_compute = True
+            
+            if st.session_state.auto_compute:
+                with st.spinner("⚡ Computing optimal route..."):
+                    route = fetch_route(
+                        st.session_state.source[0],
+                        st.session_state.source[1],
+                        st.session_state.target[0],
+                        st.session_state.target[1],
+                        selected_dataset_name,
+                        search_mode=search_mode,
+                        search_radius=search_radius,
+                        num_candidates=num_candidates
+                    )
+                    st.session_state.route = route
+                    st.session_state.auto_compute = False
+                    st.rerun()
+        
+        # Display route statistics
+        if st.session_state.route and st.session_state.route.get("success"):
+            route = st.session_state.route
+            
+            if route.get("distance"):
+                distance_km = route["distance"] / 1000
+                st.metric("Distance", f"{distance_km:.2f} km")
+            
+            if route.get("runtime_ms"):
+                st.metric("Query Time", f"{route['runtime_ms']:.2f} ms")
+                qps = 1000 / route['runtime_ms'] if route['runtime_ms'] > 0 else 0
+                st.metric("QPS", f"{qps:.0f}")
+            
+            if route.get("path"):
+                st.metric("Edges", len(route["path"]))
+        elif st.session_state.route:
+            st.error(f"❌ {st.session_state.route.get('error', 'Route computation failed')}")
+    
+    # Handle map clicks and marker drags
+    if map_data:
+                    st.markdown(f'''
+                        <div class="stat-card">
+                            <div class="stat-label">Path Complexity</div>
+                            <div class="stat-value">{len(route["path"])} <span class="stat-unit">edges</span></div>
+                        ''', unsafe_allow_html=True)
+                    
+                    # Compute average edge length
+                    if route.get("distance"):
+                        avg_edge_length = route["distance"] / len(route["path"])
+                        st.caption(f"Average edge: {avg_edge_length:.1f} m")
+                    
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    # Edge list with better formatting
+                    with st.expander("📋 View Detailed Edge List"):
+                        st.caption("**Edge IDs in route order:**")
+                        
+                        # Show first 10 and last 10 if path is long
+                        if len(route['path']) > 20:
+                            first_10 = " → ".join(map(str, route['path'][:10]))
+                            last_10 = " → ".join(map(str, route['path'][-10:]))
+                            st.code(f"{first_10}\n...\n{last_10}", language=None)
+                            st.caption(f"Total: {len(route['path'])} edges")
+                        else:
+                            edge_list = " → ".join(map(str, route['path']))
+                            st.code(edge_list, language=None)
+                
+                # Success indicator
+                st.markdown('<div class="success-badge">✅ Route Computed Successfully</div>', unsafe_allow_html=True)                # Performance insights
+                with st.expander("⚡ Performance Insights"):
+                    if route.get("runtime_ms"):
+                        qps = 1000 / route["runtime_ms"]  # Queries per second
+                        st.metric("Theoretical QPS", f"{qps:.0f} queries/sec")
+                        
+                        if route["runtime_ms"] < 1:
+                            st.success("🏆 Sub-millisecond query! Excellent performance.")
+                        elif route["runtime_ms"] < 10:
+                            st.success("✅ Great performance for real-time routing.")
+                        else:
+                            st.info("ℹ️ Good performance for this path complexity.")
+            
+            else:
+                error_msg = st.session_state.route.get("error", "Unknown error")
+                st.error(f"❌ Route Computation Failed")
+                st.warning(error_msg)
+                
+                # Add helpful tips
+                with st.expander("💡 Troubleshooting Tips"):
+                    st.markdown("""
+                    **Common Issues:**
+                    - 🔍 **No edges found**: Click closer to visible roads
+                    - 🚧 **No path**: Points may be on disconnected road segments  
+                    - 📏 **Increase search radius**: Try 200-300m for sparse areas
+                    - 🔢 **More candidates**: Increase K value for better matching
+                    
+                    **Try:**
+                    1. Zoom in and click directly on road lines
+                    2. Increase search radius in sidebar
+                    3. Select points on major roads first
+                    4. Ensure both points are in the same road network
+                    """)
+    
+    # Footer
+    st.markdown("---")
+    with st.expander("ℹ️ About"):
+        st.markdown("""
+        ### Hierarchical Routing Pipeline
+        
+        This web application demonstrates the end-to-end routing pipeline using:
+        
+        - **Stage 1**: OSM data extraction and H3 indexing
+        - **Stage 2**: Contraction Hierarchy preprocessing with PySpark
+        - **Stage 3**: C++ query engine for sub-millisecond routing
+        
+        **Features:**
+        - Click-based source/destination selection
+        - Real-time shortest path computation
+        - Interactive route visualization
+        - Support for multiple datasets/regions
+        
+        **Technology Stack:**
+        - Frontend: Streamlit + Folium
+        - Backend: FastAPI + Shapely/RTree
+        - Query Engine: C++20 with Apache Arrow
+        
+        **Learn More:**
+        - [GitHub Repository](https://github.com/khoshkhah/routing-pipeline)
+        - [Documentation](https://github.com/khoshkhah/dijkstra-on-Hierarchy)
+        """)
+
+
+if __name__ == "__main__":
+    main()

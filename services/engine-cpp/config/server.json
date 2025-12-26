@@ -1,0 +1,6 @@
+{
+    "port": 8082,
+    "host": "0.0.0.0",
+    "index_type": "h3",
+    "datasets": []
+}

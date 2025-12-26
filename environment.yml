@@ -1,0 +1,56 @@
+name: h3-routing
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  # Build Tools
+  - cmake
+  - make
+  - cxx-compiler
+  
+  # Data Science & Geometry
+  - pandas
+  - geopandas
+  - numpy
+  - scipy
+  - shapely
+  - pyarrow
+  - arrow-cpp
+  - pkg-config
+  - networkx
+  - tqdm
+  
+  # Spatial
+  - h3-py
+  - osmnx
+  - pyrosm
+  - folium
+  - mapclassify
+  - rtree
+  
+  # Database
+  - duckdb
+  - pyyaml
+  
+  # Web / API
+  - fastapi
+  - uvicorn
+  - streamlit
+  - requests
+  - python-multipart
+  
+  # Testing
+  - pytest
+  
+  # Jupyter
+  - ipykernel
+  
+  - pip:
+    - osmium  # Often better via pip
+    
+variables:
+  # Ensure CMake uses the conda compilers
+  CC: gcc
+  CXX: g++

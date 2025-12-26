@@ -1,0 +1,4 @@
+name: "Dummy"
+pbf_path: "data/maps/Dummy.osm.pbf"
+output_dir: "data/output/Dummy"
+

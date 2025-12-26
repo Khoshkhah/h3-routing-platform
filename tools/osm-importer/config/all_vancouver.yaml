@@ -1,0 +1,3 @@
+name: "All_Vancouver"
+pbf_path: "data/maps/Vancouver.osm.pbf"
+output_dir: "data/output/All_Vancouver"

@@ -1,0 +1,54 @@
+# System
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+.env
+
+# Jupyter
+.ipynb_checkpoints
+
+# C++ / CMake
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+!Makefile
+*.o
+*.a
+bin/
+
+# Editors
+.vscode/
+.idea/
+
+# Data (Ignore large files)
+data/
+**/data/
+**/output/
+!data/.gitkeep
+*.parquet
+*.osrm
+*.pbf
+*.csv
+*.geojson
+
+# Logs
+*.log
+logs/
+
+# Routing Engine Specific
+*.duckdb
+*.wal
+*.tmp
+services/engine-cpp/cpp/build/
+services/engine-cpp/build/
