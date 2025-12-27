@@ -36,7 +36,7 @@ This document details the HTTP endpoints exposed by the C++ Routing Engine (defa
   "end_lng": -123.126226,
   "mode": "knn",           // "knn", "radius", "one_to_one"
   "num_candidates": 3,     // Edges to consider near start/end
-  "algorithm": "pruned"    // "pruned" (default) or "classic"
+  "expand": true           // Set false for shortcut-level path only (debug)
 }
 ```
 

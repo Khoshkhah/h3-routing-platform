@@ -73,3 +73,49 @@ When a request hits `http://localhost:8082/route`:
 2.  **Pre-Calculation**: Contraction Hierarchies do the hard work (scanning the whole graph) offline. The query only scans a tiny "upward" subgraph.
 3.  **Data Locality**: Vectors keep data close together in memory, maximizing CPU cache hits.
 4.  **Compiled Code**: C++ compiles to machine code. There is no interpreter overhead (like Python VM) for the tight loops in Dijkstra.
+
+## 5. Spatial Index Configuration
+
+The engine supports two spatial index types for finding the nearest edge to a coordinate:
+
+### Index Types
+
+| Type | Enum Value | Best For | Description |
+|------|------------|----------|-------------|
+| **H3** | `SpatialIndexType::H3` | Dense urban networks | Uses H3 hexagonal grid for O(1) cell lookup. Searches expanding rings around query location. |
+| **R-tree** | `SpatialIndexType::RTREE` | Long highways, sparse areas | Uses Boost R-tree. Handles edges that span multiple H3 cells better. |
+
+### Configuration Options
+
+**1. Command Line:**
+```bash
+./routing_server --port 8082 --index-type rtree
+./routing_server --port 8082 --index-type h3    # default
+```
+
+**2. Config File (JSON):**
+```json
+{
+  "port": 8082,
+  "index_type": "h3"
+}
+```
+
+### When to Use Each
+
+| Scenario | Recommended Index |
+|----------|-------------------|
+| City center with dense street grid | H3 (faster) |
+| Rural/highway heavy network | R-tree (more accurate) |
+| Mixed urban + highway | R-tree |
+
+### API Response
+
+The current index type is returned in the `/dataset-info` endpoint:
+```json
+{
+  "name": "burnaby",
+  "index_type": "h3",
+  "shortcut_count": 4173086
+}
+```

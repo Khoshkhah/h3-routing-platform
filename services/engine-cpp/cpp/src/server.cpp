@@ -614,6 +614,13 @@ int main(int argc, char* argv[]) {
                 mode = body.value("mode", body.value("search_mode", "knn"));
             }
             
+            // Check expand param (default true for backward compatibility)
+            bool expand_path = true;
+            if (req.method == "POST"_method) {
+                auto body = json::parse(req.body);
+                expand_path = body.value("expand", true);
+            }
+            
             Dataset* ds = get_dataset(dataset_name);
             if (!ds) {
                 json response = {{"success", false}, {"error", "Dataset '" + dataset_name + "' not loaded"}};
@@ -698,33 +705,43 @@ int main(int argc, char* argv[]) {
                 // Compute high cell using graph's method
                 HighCell high = ds->graph.compute_high_cell(source_edge, target_edge);
                 
-                // Timing: Expand shortcut path to base edges
-                auto t_expand_start = std::chrono::high_resolution_clock::now();
-                auto expanded_path = ds->graph.expand_path(result.path);
-                auto t_expand_end = std::chrono::high_resolution_clock::now();
-                double expand_us = std::chrono::duration<double, std::micro>(t_expand_end - t_expand_start).count();
+                // Conditionally expand path based on expand param
+                std::vector<uint32_t> expanded_path;
+                json geojson = nullptr;
+                double expand_us = 0.0;
+                double geojson_us = 0.0;
+                double distance_meters = 0.0;
                 
-                // Timing: Build GeoJSON
-                auto t_geojson_start = std::chrono::high_resolution_clock::now();
-                auto geojson = build_geojson(*ds, expanded_path);
-                
-                // Trim GeoJSON to match query coordinates
-                if (geojson != nullptr && geojson.contains("geometry")) {
-                    auto trimmed = trim_geojson_coords(geojson["geometry"]["coordinates"], start_lat, start_lng, end_lat, end_lng);
-                    geojson["geometry"]["coordinates"] = trimmed;
+                if (expand_path) {
+                    // Timing: Expand shortcut path to base edges
+                    auto t_expand_start = std::chrono::high_resolution_clock::now();
+                    expanded_path = ds->graph.expand_path(result.path);
+                    auto t_expand_end = std::chrono::high_resolution_clock::now();
+                    expand_us = std::chrono::duration<double, std::micro>(t_expand_end - t_expand_start).count();
+                    
+                    // Timing: Build GeoJSON
+                    auto t_geojson_start = std::chrono::high_resolution_clock::now();
+                    geojson = build_geojson(*ds, expanded_path);
+                    
+                    // Trim GeoJSON to match query coordinates
+                    if (geojson != nullptr && geojson.contains("geometry")) {
+                        auto trimmed = trim_geojson_coords(geojson["geometry"]["coordinates"], start_lat, start_lng, end_lat, end_lng);
+                        geojson["geometry"]["coordinates"] = trimmed;
+                    }
+                    
+                    auto t_geojson_end = std::chrono::high_resolution_clock::now();
+                    geojson_us = std::chrono::duration<double, std::micro>(t_geojson_end - t_geojson_start).count();
+                    distance_meters = calculate_distance_meters(*ds, expanded_path);
                 }
-                
-                auto t_geojson_end = std::chrono::high_resolution_clock::now();
-                double geojson_us = std::chrono::duration<double, std::micro>(t_geojson_end - t_geojson_start).count();
                 
                 response["success"] = true;
                 response["dataset"] = dataset_name;
                 response["route"] = {
                     {"distance", result.distance},
-                    {"distance_meters", calculate_distance_meters(*ds, expanded_path)},
+                    {"distance_meters", distance_meters},
                     {"runtime_ms", runtime_ms},
-                    {"path", expanded_path},
-                    {"shortcut_path", result.path},  // Original shortcut path
+                    {"path", expand_path ? json(expanded_path) : json(nullptr)},
+                    {"shortcut_path", result.path},
                     {"geojson", geojson}
                 };
                 response["timing_breakdown"] = {
