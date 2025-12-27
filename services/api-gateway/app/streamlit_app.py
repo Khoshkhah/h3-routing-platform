@@ -108,13 +108,24 @@ for ds in datasets:
              boundary_path = os.path.join(os.path.dirname(script_dir), boundary_path)
 
         if os.path.exists(boundary_path):
-            with open(boundary_path, 'r') as f:
-                ds_entry['boundary'] = json.load(f)
+            try:
+                with open(boundary_path, 'r') as f:
+                    ds_entry['boundary'] = json.load(f)
+                print(f"DEBUG: Loaded boundary for {ds['name']} from {boundary_path}")
+            except Exception as e:
+                msg = f"ERROR: Failed to load boundary {boundary_path}: {e}"
+                print(msg)
+                st.error(msg)
+        else:
+            msg = f"WARNING: Boundary file not found for {ds['name']}: {boundary_path}"
+            print(msg)
+            # st.error(msg)  # Uncommenting to make it visible
+            st.error(msg)
     
     # Use the EXACT name from config as key to match what we send to backend
     dataset_map[ds['name']] = ds_entry
 
-# --- JAVASCRIPT & HTML APPLICATION (Unchanged Logic) ---
+# --- JAVASCRIPT & HTML APPLICATION ---
 # The internal component CSS already forces 100vh/100vw, but is now enforced by the outer container.
 
 html_code = f"""
@@ -299,20 +310,11 @@ html_code = f"""
     <script>
         // --- 0. CONFIGURATION & DROPDOWN ---
         const datasetConfig = __JSON_CONFIG_PLACEHOLDER__;
+        var currentLoadedDatasets = []; // Track loaded status globally
 
-        // HELPER: Robustly determine API URL
+        // HELPER: API URL - hardcoded for reliability
         function getApiBase() {{
-            var hostname = "localhost";
-            try {{
-                if (window.location.hostname && window.location.hostname !== "") {{
-                    hostname = window.location.hostname;
-                }} else if (window.parent && window.parent.location.hostname) {{
-                    hostname = window.parent.location.hostname;
-                }}
-            }} catch (e) {{
-                console.warn("Could not determine hostname, defaulting to localhost:", e);
-            }}
-            return "http://" + hostname + ":8000";
+            return "http://localhost:8000";
         }}
 
         const selector = document.getElementById('dataset-selector');
@@ -576,8 +578,14 @@ html_code = f"""
             // Update Loading Status UI
             checkServerStatus();
             
-            // Recalculate route with new dataset
-            onDrag();
+            // Recalculate route with new dataset only if loaded
+            if (currentLoadedDatasets.includes(newDataset)) {{
+                onDrag();
+            }} else {{
+                if (routeLayer) map.removeLayer(routeLayer);
+                document.getElementById('disp-time').innerText = "Not Loaded";
+                document.getElementById('disp-dist').innerText = "Load first";
+            }}
             
             // Update Boundary Layer
             if (window.currentBoundaryLayer) {{
@@ -585,7 +593,9 @@ html_code = f"""
                 window.currentBoundaryLayer = null;
             }}
             
+            console.log("Boundary data for", newDataset, ":", config.boundary ? "EXISTS" : "NULL");
             if (config.boundary) {{
+                console.log("Adding boundary layer with", config.boundary.features ? config.boundary.features.length : 0, "features");
                 window.currentBoundaryLayer = L.geoJSON(config.boundary, {{
                     style: function(feature) {{
                         return {{
@@ -601,25 +611,33 @@ html_code = f"""
         }});
         
         // --- 5b. DYNAMIC LOADING LOGIC ---
+        var apiRetryCount = 0;
+        var apiCheckInProgress = false;
+        
         async function checkServerStatus() {{
+            // Prevent overlapping checks during retry
+            if (apiCheckInProgress) return;
+            apiCheckInProgress = true;
+            
             const dataset = document.getElementById('dataset-selector').value;
             const statusLabel = document.getElementById('dataset-status-text');
             const btnLoad = document.getElementById('btn-load');
             const btnUnload = document.getElementById('btn-unload');
             
-            statusLabel.innerText = "Checking...";
+            statusLabel.innerText = apiRetryCount > 0 ? "Starting..." : "Checking...";
             statusLabel.style.color = "#999";
             
             try {{
                 const apiBase = getApiBase();
-                
-                console.log("Checking server status at:", `${{apiBase}}/server-status`);
-                
                 const resp = await fetch(`${{apiBase}}/server-status`);
                 const data = await resp.json();
                 
+                apiRetryCount = 0; // Reset on success
+                apiCheckInProgress = false;
+                
                 if (data.status === 'healthy') {{
                     const loaded = data.datasets_loaded || [];
+                    currentLoadedDatasets = loaded; // Update global
                     if (loaded.includes(dataset)) {{
                         statusLabel.innerText = "Loaded";
                         statusLabel.style.color = "#2ecc71";
@@ -634,10 +652,23 @@ html_code = f"""
                 }} else {{
                     statusLabel.innerText = "Server Error";
                     statusLabel.style.color = "red";
+                    apiCheckInProgress = false;
                 }}
             }} catch (e) {{
-                console.error("Status check failed", e);
-                statusLabel.innerText = "API Offline";
+                apiRetryCount++;
+                if (apiRetryCount < 10) {{  // Retry up to 10 times (20 seconds)
+                    statusLabel.innerText = "Starting... (" + apiRetryCount + ")";
+                    statusLabel.style.color = "#f39c12";
+                    setTimeout(() => {{
+                        apiCheckInProgress = false;
+                        checkServerStatus();
+                    }}, 2000);
+                }} else {{
+                    statusLabel.innerText = "API Offline";
+                    statusLabel.style.color = "red";
+                    apiRetryCount = 0;
+                    apiCheckInProgress = false;
+                }}
             }}
         }}
 
@@ -736,7 +767,7 @@ html_code = f"""
         }});
 
         // Initial Call
-        onDrag();
+        // onDrag(); // Disabled to prevent auto-routing on load (avoids immediate crash if dataset large)
     </script>
 </body>
 </html>
