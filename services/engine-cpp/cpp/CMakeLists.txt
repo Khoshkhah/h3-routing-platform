@@ -23,6 +23,18 @@ if(NOT H3_LIBRARY OR NOT H3_INCLUDE_DIR)
     message(FATAL_ERROR "H3 library not found. Run: ./scripts/install_h3.sh")
 endif()
 
+# DuckDB - find library
+find_library(DUCKDB_LIBRARY NAMES duckdb HINTS ${CMAKE_PREFIX_PATH}/lib $ENV{CONDA_PREFIX}/lib /usr/local/lib)
+find_path(DUCKDB_INCLUDE_DIR NAMES duckdb.hpp HINTS ${CMAKE_PREFIX_PATH}/include $ENV{CONDA_PREFIX}/include /usr/local/include)
+
+if(NOT DUCKDB_LIBRARY OR NOT DUCKDB_INCLUDE_DIR)
+    message(WARNING "DuckDB library not found. DuckDB loading will be disabled.")
+    set(HAVE_DUCKDB OFF)
+else()
+    set(HAVE_DUCKDB ON)
+    message(STATUS "Found DuckDB: ${DUCKDB_LIBRARY}")
+endif()
+
 message(STATUS "Found Arrow: ${Arrow_DIR}")
 message(STATUS "Found Parquet: ${Parquet_DIR}")
 message(STATUS "Found H3: ${H3_LIBRARY}")
@@ -42,6 +54,11 @@ target_include_directories(routing_lib PUBLIC
     ${Boost_INCLUDE_DIRS}
 )
 
+if(HAVE_DUCKDB)
+    target_include_directories(routing_lib PUBLIC ${DUCKDB_INCLUDE_DIR})
+    target_compile_definitions(routing_lib PUBLIC HAVE_DUCKDB)
+endif()
+
 target_link_libraries(routing_lib PUBLIC
     Arrow::arrow_shared
     Parquet::parquet_shared
@@ -49,6 +66,10 @@ target_link_libraries(routing_lib PUBLIC
     Boost::system
     Boost::filesystem
 )
+
+if(HAVE_DUCKDB)
+    target_link_libraries(routing_lib PUBLIC ${DUCKDB_LIBRARY})
+endif()
 
 # CLI executable
 add_executable(routing_engine src/main.cpp)

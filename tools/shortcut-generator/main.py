@@ -227,7 +227,62 @@ def run_partitioned_parallel(cfg):
     logger.info(f"Final Count: {final_count}")
     logger.info(f"Total time: {format_time(time.time() - total_start)}")
     
-    # Save output
+    # ============================================================
+    # CONSOLIDATE DATABASE: Add full edge data and boundary
+    # ============================================================
+    log_conf.log_section(logger, "CONSOLIDATING DATABASE")
+    
+    # 1. Enhance edges table with geometry, length, cost from CSV
+    edges_csv_path = cfg.input.edges_file
+    logger.info(f"Loading full edge data from: {edges_csv_path}")
+    
+    processor.con.execute(f"""
+        CREATE OR REPLACE TABLE edges_full AS
+        SELECT 
+            edge_index AS id,
+            from_cell,
+            to_cell,
+            lca_res,
+            length,
+            cost,
+            geometry
+        FROM read_csv_auto('{edges_csv_path}')
+    """)
+    
+    # Replace edges table with full version
+    processor.con.execute("DROP TABLE IF EXISTS edges")
+    processor.con.execute("ALTER TABLE edges_full RENAME TO edges")
+    
+    edge_count = processor.con.execute("SELECT count(*) FROM edges").fetchone()[0]
+    logger.info(f"Enhanced edges table: {edge_count} edges with geometry")
+    
+    # 2. Create dataset_info table with metadata
+    processor.con.execute("""
+        CREATE TABLE IF NOT EXISTS dataset_info (
+            key VARCHAR PRIMARY KEY,
+            value TEXT
+        )
+    """)
+    
+    # Insert dataset name
+    district_name = cfg.input.district
+    processor.con.execute(f"INSERT OR REPLACE INTO dataset_info VALUES ('name', '{district_name}')")
+    processor.con.execute(f"INSERT OR REPLACE INTO dataset_info VALUES ('created_at', CURRENT_TIMESTAMP::VARCHAR)")
+    processor.con.execute(f"INSERT OR REPLACE INTO dataset_info VALUES ('edge_count', '{edge_count}')")
+    processor.con.execute(f"INSERT OR REPLACE INTO dataset_info VALUES ('shortcut_count', '{final_count}')")
+    
+    # 3. Load boundary GeoJSON if provided
+    boundary_path = getattr(cfg.input, 'boundary_file', None)
+    if boundary_path and Path(boundary_path).exists():
+        logger.info(f"Loading boundary from: {boundary_path}")
+        with open(boundary_path, 'r') as f:
+            boundary_geojson = f.read().replace("'", "''")  # Escape single quotes for SQL
+        processor.con.execute(f"INSERT OR REPLACE INTO dataset_info VALUES ('boundary_geojson', '{boundary_geojson}')")
+        logger.info("Stored boundary GeoJSON in database")
+    else:
+        logger.info("No boundary file provided, skipping boundary storage")
+    
+    # Save output (Parquet for backwards compatibility)
     output_file = str(output_dir / cfg.output.shortcuts_file)
     processor.con.execute(f"""
         COPY shortcuts TO '{output_file}' (FORMAT PARQUET)
@@ -235,8 +290,8 @@ def run_partitioned_parallel(cfg):
     print(f"Saved shortcuts to: {output_file}")
     
     # Cleanup: Drop temporary tables, keep only essential ones
-    # Essential: edges, elementary_shortcuts, forward_deactivated, shortcuts
-    tables_to_keep = {'edges', 'elementary_shortcuts', 'forward_deactivated', 'shortcuts'}
+    # Essential: edges (with full data), shortcuts, dataset_info
+    tables_to_keep = {'edges', 'shortcuts', 'dataset_info'}
     all_tables = [r[0] for r in processor.con.execute(
         "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
     ).fetchall()]
@@ -247,7 +302,10 @@ def run_partitioned_parallel(cfg):
     
     # Vacuum to reclaim space
     processor.con.execute("VACUUM")
-    logger.info(f"Database cleaned. Keeping {len(tables_to_keep)} essential tables.")
+    logger.info(f"Database consolidated. Final tables: {', '.join(tables_to_keep)}")
+    
+    db_size_mb = Path(db_path).stat().st_size / 1024 / 1024
+    logger.info(f"Database size: {db_size_mb:.1f} MB")
     
     processor.close()
 

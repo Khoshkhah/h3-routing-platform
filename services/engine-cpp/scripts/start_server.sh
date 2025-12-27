@@ -12,30 +12,34 @@ fi
 
 # Default values
 PORT=${PORT:-8082}
+DB_PATH=""
 SHORTCUTS=""
 EDGES=""
+
+# Base data directory
+DATA_DIR="/home/kaveh/projects/h3-routing-platform/data"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         --port) PORT="$2"; shift 2 ;;
+        --db) DB_PATH="$2"; shift 2 ;;
         --shortcuts) SHORTCUTS="$2"; shift 2 ;;
         --edges) EDGES="$2"; shift 2 ;;
         --somerset)
-            SHORTCUTS="/home/kaveh/projects/h3-routing-platform/tools/shortcut-generator/output/Somerset_shortcuts"
-            EDGES="/home/kaveh/projects/h3-routing-platform/tools/shortcut-generator/output/Somerset_edges_old_format.csv"
+            DB_PATH="${DATA_DIR}/Somerset.db"
             shift ;;
         --burnaby)
-            SHORTCUTS="/home/kaveh/projects/h3-routing-platform/tools/shortcut-generator/output/Burnaby_shortcuts"
-            EDGES="/home/kaveh/projects/h3-routing-platform/tools/osm-importer/data/output/Burnaby/Burnaby_driving_simplified_edges_with_h3.csv"
+            DB_PATH="${DATA_DIR}/Burnaby.db"
             shift ;;
         --help)
             echo "Usage: $0 [options]"
             echo "  --port PORT        Server port (default: 8082)"
-            echo "  --shortcuts PATH   Shortcuts Parquet directory"
-            echo "  --edges PATH       Edges CSV file"
-            echo "  --somerset         Load Somerset dataset"
-            echo "  --burnaby          Load Burnaby dataset"
+            echo "  --db PATH          DuckDB database file (preferred)"
+            echo "  --shortcuts PATH   Shortcuts Parquet directory (legacy)"
+            echo "  --edges PATH       Edges CSV file (legacy)"
+            echo "  --somerset         Load Somerset dataset from DuckDB"
+            echo "  --burnaby          Load Burnaby dataset from DuckDB"
             echo ""
             echo "If no dataset specified, server starts empty. Use /load_dataset API to load data."
             exit 0
@@ -46,10 +50,14 @@ done
 
 echo "Starting routing server on port $PORT..."
 
-if [ -n "$SHORTCUTS" ] && [ -n "$EDGES" ]; then
+if [ -n "$DB_PATH" ]; then
+    # DuckDB loading (new way)
+    echo "  DuckDB: $DB_PATH"
+    exec ./cpp/build/routing_server --db "$DB_PATH" --port "$PORT"
+elif [ -n "$SHORTCUTS" ] && [ -n "$EDGES" ]; then
+    # Legacy file loading
     echo "  Shortcuts: $SHORTCUTS"
     echo "  Edges: $EDGES"
-    # Execute from cpp/build where the binary exists
     exec ./cpp/build/routing_server --shortcuts "$SHORTCUTS" --edges "$EDGES" --port "$PORT"
 else
     echo "  No dataset specified. Use /load_dataset API to load data."

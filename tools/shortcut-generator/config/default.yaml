@@ -2,17 +2,26 @@
 # ============================================
 # This file defines the default settings. Copy and modify for custom runs.
 
+# Path Configuration (Base Directories)
+paths:
+  # project_root is auto-detected, or set via H3_ROUTING_ROOT env var
+  osm_importer: "{project_root}/tools/osm-importer"
+  data_output: "{project_root}/data"
+  boundaries: "{osm_importer}/data/boundaries"
+  input_data: "{osm_importer}/data/output"
+
 # Input Configuration
 input:
-  edges_file: "/home/kaveh/projects/osm-to-road/data/output/{district}/{district}_driving_simplified_edges_with_h3.csv"
-  graph_file: "/home/kaveh/projects/osm-to-road/data/output/{district}/{district}_driving_edge_graph.csv"
+  edges_file: "{input_data}/{district}/{district}_driving_simplified_edges_with_h3.csv"
+  graph_file: "{input_data}/{district}/{district}_driving_edge_graph.csv"
+  boundary_file: "{boundaries}/{district}.geojson"
   district: "Burnaby"
 
 # Output Configuration
 output:
-  directory: "output"
+  directory: "{data_output}"
   shortcuts_file: "{district}_shortcuts"
-  persist_dir: "persist"
+  persist_dir: "{data_output}"  # DuckDB files go here
 
 # Algorithm Configuration
 algorithm:
@@ -27,7 +36,7 @@ algorithm:
 duckdb:
   memory_limit: "12GB"
   threads: null        # null = auto-detect
-  fresh_start: false   # If true, delete existing DB before running
+  fresh_start: false   # If true, delete existing DB before running, or continue from existing DB from phase 3
 
 # Parallel Execution Configuration
 parallel:

@@ -94,6 +94,23 @@ public:
      */
     bool load_edge_metadata(const std::string& path);
 
+#ifdef HAVE_DUCKDB
+    /**
+     * @brief Load all data from consolidated DuckDB database.
+     * Loads edges (with geometry), shortcuts, and dataset_info in one call.
+     * @param db_path Path to DuckDB database file
+     * @return true if successful
+     */
+    bool load_from_duckdb(const std::string& db_path);
+
+    /**
+     * @brief Get dataset info value by key.
+     * @param key Key name (e.g., "name", "boundary_geojson")
+     * @return Value string, or empty if not found
+     */
+    std::string get_dataset_info(const std::string& key) const;
+#endif
+
     /**
      * @brief Build spatial index for nearest edge search.
      * @param type Index type (H3 or RTREE)
@@ -202,5 +219,8 @@ private:
     
     // Shortcut lookup: key = (from << 32 | to) -> shortcut index
     std::unordered_map<uint64_t, size_t> shortcut_lookup_;
+    
+    // Dataset info from DuckDB (key -> value)
+    std::unordered_map<std::string, std::string> dataset_info_;
 };
 

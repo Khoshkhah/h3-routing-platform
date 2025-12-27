@@ -240,14 +240,15 @@ class DatasetRegistry:
         self.datasets: Dict[str, Dict[str, str]] = {}
         self.spatial_indices: Dict[str, SpatialIndex] = {}
     
-    def register_dataset(self, name: str, shortcuts_path: str, edges_path: str, binary_path: str):
-        """Register a new dataset."""
+    def register_dataset(self, name: str, db_path: str = '', shortcuts_path: str = '', edges_path: str = '', binary_path: str = ''):
+        """Register a new dataset. Prefer db_path for DuckDB, fallback to shortcuts/edges for legacy."""
         self.datasets[name] = {
+            'db_path': db_path,
             'shortcuts_path': shortcuts_path,
             'edges_path': edges_path,
             'binary_path': binary_path
         }
-        logger.info(f"Registered dataset: {name}")
+        logger.info(f"Registered dataset: {name} (db_path={db_path if db_path else 'N/A'})")
     
     def load_dataset(self, name: str):
         """Load spatial index for a dataset."""

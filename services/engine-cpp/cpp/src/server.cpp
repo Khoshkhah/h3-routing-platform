@@ -240,6 +240,39 @@ bool load_dataset(const std::string& name, const std::string& shortcuts_path, co
     return true;
 }
 
+#ifdef HAVE_DUCKDB
+// Load dataset from consolidated DuckDB database
+bool load_dataset_duckdb(const std::string& name, const std::string& db_path) {
+    std::cout << "Loading dataset '" << name << "' from DuckDB...\n";
+    std::cout << "  Database: " << db_path << "\n";
+    
+    auto ds = std::make_unique<Dataset>();
+    ds->name = name;
+    
+    if (!ds->graph.load_from_duckdb(db_path)) {
+        std::cerr << "  Failed to load from DuckDB\n";
+        return false;
+    }
+    
+    std::cout << "  Building spatial index (" << g_config.index_type << ")...\n";
+    if (g_config.index_type == "rtree") {
+        ds->graph.build_spatial_index(SpatialIndexType::RTREE);
+    } else {
+        ds->graph.build_spatial_index(SpatialIndexType::H3);
+    }
+    
+    ds->loaded = true;
+    
+    {
+        std::lock_guard<std::mutex> lock(g_datasets_mutex);
+        g_datasets[name] = std::move(ds);
+    }
+    
+    std::cout << "  Dataset '" << name << "' loaded successfully from DuckDB\n";
+    return true;
+}
+#endif
+
 // Unload dataset by name
 bool unload_dataset(const std::string& name) {
     std::lock_guard<std::mutex> lock(g_datasets_mutex);
@@ -305,6 +338,7 @@ int main(int argc, char* argv[]) {
     
     // Parse command line args
     std::string initial_name, initial_shortcuts, initial_edges;
+    std::string initial_db_path;
     std::string config_path = "config/server.json";  // Default config path
     bool use_config = false;
     
@@ -315,6 +349,8 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--config" && i + 1 < argc) {
             config_path = argv[++i];
             use_config = true;
+        } else if (arg == "--db" && i + 1 < argc) {
+            initial_db_path = argv[++i];
         } else if (arg == "--shortcuts" && i + 1 < argc) {
             initial_shortcuts = argv[++i];
         } else if (arg == "--edges" && i + 1 < argc) {
@@ -327,8 +363,9 @@ int main(int argc, char* argv[]) {
             std::cout << "Usage: routing_server [options]\n"
                       << "  --config PATH      Config file (default: config/server.json)\n"
                       << "  --port PORT        Server port (default: 8080)\n"
-                      << "  --shortcuts PATH   Shortcuts Parquet directory\n"
-                      << "  --edges PATH       Edges CSV file\n"
+                      << "  --db PATH          DuckDB database file (preferred)\n"
+                      << "  --shortcuts PATH   Shortcuts Parquet directory (legacy)\n"
+                      << "  --edges PATH       Edges CSV file (legacy)\n"
                       << "  --name NAME        Dataset name (default: 'default')\n"
                       << "  --index TYPE       Spatial index: h3 or rtree (default: h3)\n";
             return 0;
@@ -344,9 +381,15 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    // Load additional dataset from command line (if provided)
+    // Load dataset from DuckDB (preferred) or files (legacy)
+    if (initial_name.empty()) initial_name = "default";
+    
+#ifdef HAVE_DUCKDB
+    if (!initial_db_path.empty()) {
+        load_dataset_duckdb(initial_name, initial_db_path);
+    } else
+#endif
     if (!initial_shortcuts.empty() && !initial_edges.empty()) {
-        if (initial_name.empty()) initial_name = "default";
         load_dataset(initial_name, initial_shortcuts, initial_edges);
     }
     
@@ -371,17 +414,34 @@ int main(int argc, char* argv[]) {
         try {
             auto body = json::parse(req.body);
             std::string name = body.value("dataset", body.value("name", "default"));
+            
+#ifdef HAVE_DUCKDB
+            // Prefer DuckDB path if provided
+            std::string db_path = body.value("db_path", "");
+            if (!db_path.empty()) {
+                bool success = load_dataset_duckdb(name, db_path);
+                json response = {
+                    {"success", success},
+                    {"dataset", name},
+                    {"source", "duckdb"}
+                };
+                return crow::response(success ? 200 : 500, response.dump());
+            }
+#endif
+            
+            // Fallback to separate files
             std::string shortcuts = body.value("shortcuts_path", "");
             std::string edges = body.value("edges_path", "");
             
             if (shortcuts.empty() || edges.empty()) {
-                return crow::response(400, R"({"success": false, "error": "shortcuts_path and edges_path required"})");
+                return crow::response(400, R"({"success": false, "error": "db_path or (shortcuts_path + edges_path) required"})");
             }
             
             bool success = load_dataset(name, shortcuts, edges);
             json response = {
                 {"success", success},
-                {"dataset", name}
+                {"dataset", name},
+                {"source", "files"}
             };
             return crow::response(success ? 200 : 500, response.dump());
             
@@ -416,6 +476,36 @@ int main(int argc, char* argv[]) {
             return crow::response(400, response.dump());
         }
     });
+    
+#ifdef HAVE_DUCKDB
+    // ============================================================
+    // GET BOUNDARY - Return dataset boundary as GeoJSON
+    // ============================================================
+    CROW_ROUTE(app, "/boundary").methods("GET"_method)([](const crow::request& req) {
+        try {
+            std::string dataset_name = req.url_params.get("dataset") ? req.url_params.get("dataset") : "default";
+            
+            Dataset* ds = get_dataset(dataset_name);
+            if (!ds) {
+                return crow::response(404, R"({"error": "Dataset not found"})");
+            }
+            
+            std::string boundary = ds->graph.get_dataset_info("boundary_geojson");
+            if (boundary.empty()) {
+                return crow::response(404, R"({"error": "No boundary GeoJSON stored for this dataset"})");
+            }
+            
+            // Return raw GeoJSON
+            auto resp = crow::response(200, boundary);
+            resp.set_header("Content-Type", "application/geo+json");
+            return resp;
+            
+        } catch (const std::exception& e) {
+            json response = {{"error", e.what()}};
+            return crow::response(500, response.dump());
+        }
+    });
+#endif
     
     // ============================================================
     // NEAREST EDGES - Return KNN candidate edges for a location

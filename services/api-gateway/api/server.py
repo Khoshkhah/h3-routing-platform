@@ -55,9 +55,10 @@ ch_factory = CHQueryEngineFactory()
 class DatasetInfo(BaseModel):
     """Dataset metadata."""
     name: str
-    shortcuts_path: str
-    edges_path: str
-    binary_path: str
+    db_path: Optional[str] = None  # DuckDB database path (preferred)
+    shortcuts_path: Optional[str] = None  # Legacy: Parquet path
+    edges_path: Optional[str] = None  # Legacy: CSV path
+    binary_path: Optional[str] = None
     bounds: Optional[List[float]] = None
     center: Optional[List[float]] = None
 
@@ -101,8 +102,23 @@ def load_config(config_path: str = "config/datasets.yaml"):
         config = yaml.safe_load(f)
     
     datasets = config.get('datasets', [])
-    base_dir = config_file.parent.parent
+    paths_config = config.get('paths', {})
     
+    # Auto-detect project root: .../services/api-gateway/api/server.py -> 3 levels up -> project_root
+    project_root = Path(__file__).resolve().parents[3]
+    
+    # Context for resolution
+    resolution_context = {"project_root": str(project_root)}
+    
+    # 1. Resolve paths_config first (e.g. data_root using project_root)
+    resolved_paths = {}
+    if paths_config:
+        for key, value in paths_config.items():
+            if isinstance(value, str):
+                resolved_paths[key] = value.format(**resolution_context)
+        # Update context with resolved paths
+        resolution_context.update(resolved_paths)
+
     # Wait for C++ server health
     server_url = "http://localhost:8082"
     max_retries = 10
@@ -122,49 +138,51 @@ def load_config(config_path: str = "config/datasets.yaml"):
     
     for ds in datasets:
         name = ds['name']
-        shortcuts_path = ds['shortcuts_path']
-        edges_path = ds['edges_path']
-        binary_path = ds['binary_path']
         
-        # Resolve relative paths
-        if not Path(shortcuts_path).is_absolute():
+        # Support both DuckDB (preferred) and legacy file paths
+        db_path = ds.get('db_path', '')
+        shortcuts_path = ds.get('shortcuts_path', '')
+        edges_path = ds.get('edges_path', '')
+        binary_path = ds.get('binary_path', '')
+        boundary_path = ds.get('boundary_path', '')
+
+        # Resolve variables using the full context (project_root + paths)
+        if resolution_context:
+            if db_path: db_path = db_path.format(**resolution_context)
+            if shortcuts_path: shortcuts_path = shortcuts_path.format(**resolution_context)
+            if edges_path: edges_path = edges_path.format(**resolution_context)
+            if binary_path: binary_path = binary_path.format(**resolution_context)
+            if boundary_path: boundary_path = boundary_path.format(**resolution_context)
+            # Store resolved boundary path back in dataset info
+            ds['boundary_path'] = boundary_path
+        
+        # Resolve relative paths (fallback to config dir relative)
+        base_dir = config_file.parent.parent
+        if db_path and not Path(db_path).is_absolute():
+            db_path = str(base_dir / db_path)
+        if shortcuts_path and not Path(shortcuts_path).is_absolute():
             shortcuts_path = str(base_dir / shortcuts_path)
-        if not Path(edges_path).is_absolute():
+        if edges_path and not Path(edges_path).is_absolute():
             edges_path = str(base_dir / edges_path)
-        if not Path(binary_path).is_absolute():
+        if binary_path and not Path(binary_path).is_absolute():
             binary_path = str(base_dir / binary_path)
         
-        registry.register_dataset(name, shortcuts_path, edges_path, binary_path)
-        logger.info(f"Registered dataset '{name}'")
+        # Register dataset (prefer db_path)
+        registry.register_dataset(name, db_path=db_path, shortcuts_path=shortcuts_path, edges_path=edges_path, binary_path=binary_path, boundary_path=boundary_path)
+        logger.info(f"Registered dataset '{name}' (db_path={db_path if db_path else 'N/A'})")
         
-        # Load into C++ server if ready
-        # Default to lazy loading (do not load on startup)
-        # if server_ready:
-        #     try:
-        #         payload = {
-        #             "dataset": name,
-        #             "shortcuts_path": shortcuts_path,
-        #             "edges_path": edges_path
-        #         }
-        #         resp = requests.post(f"{server_url}/load_dataset", json=payload, timeout=30)
-        #         if resp.status_code == 200:
-        #             logger.info(f"Successfully loaded '{name}' into C++ server")
-        #         else:
-        #             logger.error(f"Failed to load '{name}': {resp.text}")
-        #     except Exception as e:
-        #         logger.error(f"Error loading '{name}' into C++ server: {e}")
-        
-        # Also register with CH query engine factory
-        try:
-            ch_factory.register_dataset(
-                name=name,
-                shortcuts_path=shortcuts_path,
-                edges_path=edges_path,
-                binary_path=binary_path,
-                timeout=30
-            )
-        except Exception as e:
-            logger.warning(f"CH engine not available for {name}: {e}")
+        # Also register with CH query engine factory (legacy support)
+        if shortcuts_path and edges_path:
+            try:
+                ch_factory.register_dataset(
+                    name=name,
+                    shortcuts_path=shortcuts_path,
+                    edges_path=edges_path,
+                    binary_path=binary_path,
+                    timeout=30
+                )
+            except Exception as e:
+                logger.warning(f"CH engine not available for {name}: {e}")
 
 
 @app.on_event("startup")
@@ -396,13 +414,21 @@ async def load_dataset_endpoint(request: LoadDatasetRequest):
     
     info = registry.get_dataset_info(dataset)
     
-    # Proxy to C++ server
+    # Proxy to C++ server - prefer db_path for DuckDB loading
     try:
-        payload = {
-            "dataset": dataset,
-            "shortcuts_path": info['shortcuts_path'],
-            "edges_path": info['edges_path']
-        }
+        if info.get('db_path'):
+            # DuckDB loading (preferred)
+            payload = {
+                "dataset": dataset,
+                "db_path": info['db_path']
+            }
+        else:
+            # Legacy file loading
+            payload = {
+                "dataset": dataset,
+                "shortcuts_path": info['shortcuts_path'],
+                "edges_path": info['edges_path']
+            }
         resp = requests.post("http://localhost:8082/load_dataset", json=payload, timeout=60)
         
         if resp.status_code == 200:

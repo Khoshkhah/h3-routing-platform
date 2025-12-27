@@ -1,99 +1,59 @@
-# Road-to-Shortcut DuckDB
+# Shortcut Generator (DuckDB)
 
-DuckDB-based shortcut generation for road networks using H3 spatial indexing.
+The core preprocessing tool that builds Contraction Hierarchies from road networks using H3 spatial partitioning.
 
-## Overview
+## ⚡ Overview
 
-This project computes shortcut paths in road networks using a hierarchical forward-backward algorithm with H3-based spatial partitioning. It provides both parallel and sequential implementations optimized for performance.
+This tool takes a road network (edges and graph connectivity) and produces a **Shortcut Database (`.db`)**. A hierarchical algorithm partitions the graph using H3 cells, computing shortcuts within and between cells to speed up routing queries.
 
-## Performance (Burnaby Dataset: 4,173,086 shortcuts)
+## 🚀 Key Features
 
-| Version | Time | Description |
-|---------|------|-------------|
-| **Parallel** | **5m 9s** | 4 workers, recommended |
-| Sequential | 12m 9s | Single-threaded |
+- **H3 Partitioning**: Uses H3 cells (resolutions 7-15) to parallelize shortest path computations.
+- **DuckDB Storage**: Inputs and outputs are managed efficiently using DuckDB.
+- **Robustness**: Handles turn restrictions and complex graph topology.
+- **Variable Configuration**: Supports flexible path configurations.
 
-### Phase Breakdown (Parallel)
+## 📦 Usage
 
-| Phase | Time | Description |
-|-------|------|-------------|
-| Phase 1 | 55s | Forward pass 15→7 (33 parallel chunks) |
-| Phase 2 | 31s | Hierarchical consolidation 6→-1 |
-| Phase 3 | 2m 53s | Backward consolidation -1→7 |
-| Phase 4 | 50s | Backward chunked 7→15 (parallel) |
+The tool is configured via YAML files in the `config/` directory.
 
-## Setup
+### Quick Start
 
 ```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate
+# Activate environment
+conda activate h3-routing
 
-# Install dependencies
-pip install -r requirements.txt
+# Run for a dataset (e.g., Burnaby)
+python main.py --config config/burnaby.yaml
 ```
 
-## Usage
+This will produce: `data/Burnaby.db`
 
-```bash
-# Run parallel version (recommended)
-python src/generate_shortcuts_parallel.py --district Burnaby
+### Configuration
 
-# Run sequential version
-python src/generate_shortcuts_partitioned.py --district Burnaby
-```
+Configs inherit from `config/default.yaml`. To add a new dataset:
 
-## Configuration
+1. Create `config/new_city.yaml`
+2. Specify the district name and any overrides:
+   ```yaml
+   input:
+     district: "New_City"
+   
+   duckdb:
+     memory_limit: "16GB"
+   ```
 
-Edit `src/config.py`:
+## 📊 Output Schema
 
-| Setting | Description |
-|---------|-------------|
-| `DISTRICT_NAME` | Dataset to process (e.g., "Burnaby") |
-| `EDGES_FILE` | Path to edges CSV with H3 indices |
-| `GRAPH_FILE` | Path to edge connectivity graph |
-| `DUCKDB_MEMORY_LIMIT` | Memory limit (default: 12GB) |
+The resulting `.db` file contains:
 
-## Algorithm
+- **edges**: Road segments with geometry, length, and attributes.
+- **shortcuts**: Pre-calculated shortcut edges for fast routing.
+- **dataset_info**: Metadata including the boundary GeoJSON.
 
-The algorithm uses a 4-phase hierarchical approach:
+## 📁 Structure
 
-1. **Phase 1 (Forward Chunked)**: Process each H3 cell at resolution 7 independently, running shortest paths from res 15→7
-2. **Phase 2 (Forward Consolidation)**: Merge child cells into parents, continuing from res 6→-1 (global)
-3. **Phase 3 (Backward Consolidation)**: Split from global back down to res 7, running SP at each level
-4. **Phase 4 (Backward Chunked)**: Process each res-7 cell independently from res 8→15
-
-### Key Optimizations
-
-- **H3 Metadata Pre-calculation**: `lca_res`, `inner_cell`, `outer_cell`, `inner_res`, `outer_res` computed once
-- **Parallel Processing**: Phase 1 and 4 use Python multiprocessing
-- **Smart SP Skipping**: Skip shortest path when no shortcuts are newly activated
-- **Hash Join Partitioning**: Efficient cell assignment using temp tables
-
-## Documentation
-
-- [Core Concepts](docs/core_concepts.md) - Edge model, H3 logic, activation rules
-- [Algorithm Overview](docs/algorithms.md) - Detailed phase breakdown
-- [Architecture](docs/architecture.md) - System design
-- [Configuration](docs/configuration.md) - Setup guide
-
-## Project Structure
-
-```
-road-to-shortcut-duckdb/
-├── src/
-│   ├── generate_shortcuts_parallel.py   # Main entry (parallel)
-│   ├── generate_shortcuts_partitioned.py # Core algorithm (sequential)
-│   ├── config.py                         # Configuration
-│   ├── utilities.py                      # DuckDB utilities & H3 UDFs
-│   └── logging_config.py                 # Logging setup
-├── docs/                                 # Documentation
-├── archive/                              # Legacy/debug scripts
-├── logs/                                 # Log files (gitignored)
-├── output/                               # Generated shortcuts (gitignored)
-└── requirements.txt
-```
-
-## License
-
-MIT
+- `main.py`: Entry point.
+- `src/processor_parallel.py`: Main logic for parallel shortcut generation.
+- `src/config_loader.py`: Handles YAML configuration and variable resolution.
+- `config/`: Configuration files.

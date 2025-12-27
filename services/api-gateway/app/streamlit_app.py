@@ -53,9 +53,28 @@ def load_config():
     config_path = os.path.join(script_dir, "..", "config", "datasets.yaml")
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
-    return config['datasets']
+    return config
 
-datasets = load_config()
+config_data = load_config()
+datasets = config_data.get('datasets', [])
+paths_config = config_data.get('paths', {})
+
+# Auto-detect project root: .../services/api-gateway/app/streamlit_app.py -> 3 levels up -> project_root
+# Assuming streamlit_app.py is in services/api-gateway/app/
+project_root = Path(__file__).resolve().parents[3]
+
+# Context for resolution
+resolution_context = {"project_root": str(project_root)}
+
+# 1. Resolve paths_config first
+resolved_paths = {}
+if paths_config:
+    for key, value in paths_config.items():
+        if isinstance(value, str):
+            resolved_paths[key] = value.format(**resolution_context)
+    # Update context with resolved paths
+    resolution_context.update(resolved_paths)
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Convert datasets list to a dict for easier access, and load boundaries
@@ -76,8 +95,17 @@ for ds in datasets:
     
     # Load boundary if exists
     if 'boundary_path' in ds:
+        raw_path = ds['boundary_path']
+        # Resolve variables using context
+        if resolution_context:
+            raw_path = raw_path.format(**resolution_context)
+            
         # Resolve 'data/burnaby/...' relative to project root (one level up from app/)
-        boundary_path = os.path.join(os.path.dirname(script_dir), ds['boundary_path'])
+        # BUT: The variable {boundary_root} is absolute, so os.path.join handles it correctly (ignores first arg if second is abs)
+        boundary_path = raw_path
+        if not os.path.isabs(boundary_path):
+             boundary_path = os.path.join(os.path.dirname(script_dir), boundary_path)
+
         if os.path.exists(boundary_path):
             with open(boundary_path, 'r') as f:
                 ds_entry['boundary'] = json.load(f)

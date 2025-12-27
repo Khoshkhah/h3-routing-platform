@@ -10,6 +10,10 @@
 #include <arrow/io/api.h>
 #include <parquet/arrow/reader.h>
 
+#ifdef HAVE_DUCKDB
+#include <duckdb.hpp>
+#endif
+
 #include <fstream>
 #include <iostream>
 #include <queue>
@@ -1009,3 +1013,132 @@ const std::vector<std::pair<double, double>>* ShortcutGraph::get_edge_geometry(u
     }
     return nullptr;
 }
+
+#ifdef HAVE_DUCKDB
+
+bool ShortcutGraph::load_from_duckdb(const std::string& db_path) {
+    std::cout << "Loading data from DuckDB: " << db_path << std::endl;
+    
+    try {
+        // Open in read-only mode to avoid lock conflicts with Python processes
+        duckdb::DBConfig config;
+        config.options.access_mode = duckdb::AccessMode::READ_ONLY;
+        duckdb::DuckDB db(db_path, &config);
+        duckdb::Connection con(db);
+        
+        // Clear existing data
+        shortcuts_.clear();
+        fwd_adj_.clear();
+        bwd_adj_.clear();
+        shortcut_lookup_.clear();
+        edge_meta_.clear();
+        dataset_info_.clear();
+        
+        // 1. Load shortcuts
+        auto result = con.Query("SELECT from_edge, to_edge, cost, via_edge, cell, inside FROM shortcuts");
+        if (result->HasError()) {
+            std::cerr << "Error loading shortcuts: " << result->GetError() << std::endl;
+            return false;
+        }
+        
+        while (auto chunk = result->Fetch()) {
+            for (idx_t i = 0; i < chunk->size(); i++) {
+                Shortcut sc;
+                sc.from = static_cast<uint32_t>(chunk->GetValue(0, i).GetValue<int32_t>());
+                sc.to = static_cast<uint32_t>(chunk->GetValue(1, i).GetValue<int32_t>());
+                sc.cost = chunk->GetValue(2, i).GetValue<double>();
+                sc.via_edge = static_cast<uint32_t>(chunk->GetValue(3, i).GetValue<int32_t>());
+                sc.cell = static_cast<uint64_t>(chunk->GetValue(4, i).GetValue<int64_t>());
+                sc.inside = static_cast<int8_t>(chunk->GetValue(5, i).GetValue<int8_t>());
+                sc.cell_res = (sc.cell == 0) ? -1 : static_cast<int8_t>(h3_utils::get_resolution(sc.cell));
+                
+                size_t idx = shortcuts_.size();
+                shortcuts_.push_back(sc);
+                fwd_adj_[sc.from].push_back(idx);
+                bwd_adj_[sc.to].push_back(idx);
+            }
+        }
+        std::cout << "  Loaded " << shortcuts_.size() << " shortcuts" << std::endl;
+        
+        // Build shortcut lookup
+        for (size_t idx = 0; idx < shortcuts_.size(); ++idx) {
+            const auto& sc = shortcuts_[idx];
+            const uint64_t key = (static_cast<uint64_t>(sc.from) << 32) | sc.to;
+            if (shortcut_lookup_.find(key) == shortcut_lookup_.end()) {
+                shortcut_lookup_[key] = idx;
+            }
+        }
+        
+        // 2. Load edges with geometry
+        result = con.Query("SELECT id, from_cell, to_cell, lca_res, length, cost, geometry FROM edges");
+        if (result->HasError()) {
+            std::cerr << "Error loading edges: " << result->GetError() << std::endl;
+            return false;
+        }
+        
+        while (auto chunk = result->Fetch()) {
+            for (idx_t i = 0; i < chunk->size(); i++) {
+                uint32_t id = static_cast<uint32_t>(chunk->GetValue(0, i).GetValue<int64_t>());
+                EdgeMeta meta;
+                meta.from_cell = static_cast<uint64_t>(chunk->GetValue(1, i).GetValue<int64_t>());
+                meta.to_cell = static_cast<uint64_t>(chunk->GetValue(2, i).GetValue<int64_t>());
+                meta.lca_res = chunk->GetValue(3, i).GetValue<int64_t>();
+                meta.length = chunk->GetValue(4, i).GetValue<double>();
+                meta.cost = chunk->GetValue(5, i).GetValue<double>();
+                
+                // Parse geometry (WKT LINESTRING)
+                std::string geom = chunk->GetValue(6, i).ToString();
+                size_t start = geom.find('(');
+                size_t end = geom.rfind(')');
+                if (start != std::string::npos && end != std::string::npos && end > start) {
+                    std::string coords = geom.substr(start + 1, end - start - 1);
+                    std::stringstream ss(coords);
+                    std::string point;
+                    while (std::getline(ss, point, ',')) {
+                        size_t first = point.find_first_not_of(" \t");
+                        if (first == std::string::npos) continue;
+                        point = point.substr(first);
+                        std::istringstream ps(point);
+                        double lon, lat;
+                        if (ps >> lon >> lat) {
+                            meta.geometry.push_back({lon, lat});
+                        }
+                    }
+                }
+                
+                edge_meta_[id] = std::move(meta);
+            }
+        }
+        std::cout << "  Loaded " << edge_meta_.size() << " edges with geometry" << std::endl;
+        
+        // 3. Load dataset_info
+        result = con.Query("SELECT key, value FROM dataset_info");
+        if (!result->HasError()) {
+            while (auto chunk = result->Fetch()) {
+                for (idx_t i = 0; i < chunk->size(); i++) {
+                    std::string key = chunk->GetValue(0, i).ToString();
+                    std::string value = chunk->GetValue(1, i).ToString();
+                    dataset_info_[key] = value;
+                }
+            }
+            std::cout << "  Loaded " << dataset_info_.size() << " dataset info entries" << std::endl;
+        }
+        
+        std::cout << "DuckDB loading complete." << std::endl;
+        return !shortcuts_.empty() && !edge_meta_.empty();
+        
+    } catch (const std::exception& e) {
+        std::cerr << "DuckDB error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+std::string ShortcutGraph::get_dataset_info(const std::string& key) const {
+    auto it = dataset_info_.find(key);
+    if (it != dataset_info_.end()) {
+        return it->second;
+    }
+    return "";
+}
+
+#endif // HAVE_DUCKDB

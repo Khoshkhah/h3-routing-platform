@@ -1,33 +1,27 @@
 # Somerset dataset configuration
-# ==============================
+# ===============================
+# Inherits paths from default.yaml
 
-# Input Configuration
 input:
   district: "Somerset"
-  edges_file: "/home/kaveh/projects/h3-routing-platform/tools/osm-importer/data/output/Somerset/Somerset_driving_simplified_edges_with_h3.csv"
-  graph_file: "/home/kaveh/projects/h3-routing-platform/tools/osm-importer/data/output/Somerset/Somerset_driving_edge_graph.csv"
-
-# Output Configuration
-output:
-  directory: "/home/kaveh/projects/h3-routing-platform/tools/shortcut-generator/output"
-  shortcuts_file: "Somerset_shortcuts"
-  persist_dir: "/home/kaveh/projects/h3-routing-platform/tools/shortcut-generator/persist"
 
 # Algorithm Configuration
 algorithm:
-  sp_method: "HYBRID"  # SCIPY, PURE, HYBRID
-  hybrid_res: 10       # For HYBRID: PURE for res >= 10, SCIPY for res < 10
+  sp_method: "HYBRID"
+  hybrid_res: 10
   partition_res: 7
 
 # Parallel Execution
 parallel:
-  workers: 10          # 1 = single-threaded, >1 = parallel with N workers
+  workers: 10
+  workers_phase1: 10
+  workers_phase4: 10
 
 # DuckDB Configuration
 duckdb:
-  memory_limit: "16GB"
+  memory_limit: "12GB"
   threads: null        # null = auto-detect
-  fresh_start: True   # If true, delete existing DB before running
+  fresh_start: true   # If true, delete existing DB before running, or continue from existing DB from phase 3
 
 # Logging Configuration
 logging:
