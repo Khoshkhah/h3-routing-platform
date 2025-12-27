@@ -83,7 +83,11 @@ class LoggingConfig:
 
 @dataclass
 class ParallelConfig:
-    workers: int = 1           # 1 = single-threaded, >1 = parallel
+    workers: int = 1           # Default for all phases if phase-specific not set
+    workers_phase1: Optional[int] = None  # Override for Phase 1
+    workers_phase2: Optional[int] = None  # Override for Phase 2 (currently unused)
+    workers_phase3: Optional[int] = None  # Override for Phase 3 (currently unused)
+    workers_phase4: Optional[int] = None  # Override for Phase 4
     chunk_size: int = 1000
 
 

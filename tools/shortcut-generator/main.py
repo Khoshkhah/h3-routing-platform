@@ -11,6 +11,7 @@ Usage:
 
 import sys
 import os
+import gc
 import argparse
 from pathlib import Path
 
@@ -124,13 +125,14 @@ def run_partitioned_parallel(cfg):
     
     total_start = time.time()
     
-    # Prepare worker configuration
+    # Prepare worker configuration (use phase-specific if set, else default)
     worker_config = {
-        'phase1': getattr(cfg.parallel, 'workers_phase1', cfg.parallel.workers),
-        'phase2': getattr(cfg.parallel, 'workers_phase2', cfg.parallel.workers),
-        'phase3': getattr(cfg.parallel, 'workers_phase3', cfg.parallel.workers),
-        'phase4': getattr(cfg.parallel, 'workers_phase4', cfg.parallel.workers),
+        'phase1': cfg.parallel.workers_phase1 or cfg.parallel.workers,
+        'phase2': cfg.parallel.workers_phase2 or cfg.parallel.workers,
+        'phase3': cfg.parallel.workers_phase3 or cfg.parallel.workers,
+        'phase4': cfg.parallel.workers_phase4 or cfg.parallel.workers,
     }
+    logger.info(f"Worker config: Phase1={worker_config['phase1']}, Phase4={worker_config['phase4']}")
     
     # Create parallel processor
     processor = ParallelShortcutProcessor(
@@ -164,22 +166,45 @@ def run_partitioned_parallel(cfg):
         res_partition_cells = processor.process_forward_phase1_parallel()
         logger.info(f"Phase 1 complete ({format_time(time.time() - phase1_start)}). Created {len(res_partition_cells)} cell tables.")
         processor.checkpoint()
+        gc.collect()  # Memory cleanup after Phase 1
         
         # Phase 2: Hierarchical Consolidation (forward pass)
         phase2_start = time.time()
         processor.process_forward_phase2_consolidation()
         logger.info(f"Phase 2 complete ({format_time(time.time() - phase2_start)}).")
+        
+        # =============================================
+        # MEMORY CLEANUP between Phase 2 and Phase 3
+        # This prevents OOM crashes in Phase 4
+        # =============================================
+        logger.info("Cleaning up memory after Phase 2...")
+        processor.checkpoint()  # Force DuckDB to flush to disk
+        
+        # Drop temp tables that are no longer needed
+        try:
+            processor.con.execute("DROP TABLE IF EXISTS elementary_shortcuts")
+            processor.con.execute("DROP TABLE IF EXISTS shortcuts")
+        except:
+            pass
+        
+        # Force Python garbage collection
+        gc.collect()
+        logger.info("Memory cleanup complete.")
     
     # Phase 3: Sequential (OLD consolidation version)
     phase3_start = time.time()
     #processor.process_backward_phase3_consolidation()
     processor.process_backward_phase3_efficient()
     logger.info(f"Phase 3 complete ({format_time(time.time() - phase3_start)}).")
+    processor.checkpoint()
+    gc.collect()  # Memory cleanup after Phase 3
     
     # Phase 4: Parallel (processor logs its own header)
     phase4_start = time.time()
     processor.process_backward_phase4_parallel()
     logger.info(f"Phase 4 complete ({format_time(time.time() - phase4_start)}).")
+    processor.checkpoint()
+    gc.collect()  # Memory cleanup after Phase 4
     
     # Finalize: compute cell and inside columns for routing engine
     # MUST join to edges to get lca_in/lca_out for correct inside calculation

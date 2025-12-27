@@ -38,10 +38,10 @@ class ShortcutProcessor:
         # Ensure deactivated table exists (with full H3 schema)
         self.con.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.forward_deactivated_table} (
-                from_edge BIGINT, 
-                to_edge BIGINT, 
-                cost DOUBLE, 
-                via_edge BIGINT,
+                from_edge INTEGER, 
+                to_edge INTEGER, 
+                cost FLOAT, 
+                via_edge INTEGER,
                 lca_res INTEGER,
                 inner_cell BIGINT,
                 outer_cell BIGINT,
@@ -52,7 +52,7 @@ class ShortcutProcessor:
 
         self.con.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.backward_deactivated_table} (
-                from_edge BIGINT, to_edge BIGINT, cost DOUBLE, via_edge BIGINT,
+                from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER,
                 lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, inner_res TINYINT, outer_res TINYINT
             )
         """)
@@ -61,7 +61,7 @@ class ShortcutProcessor:
         self.con.execute(f"DELETE FROM {self.backward_deactivated_table}")
         self.con.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.backward_deactivated_table} (
-                from_edge BIGINT, to_edge BIGINT, cost DOUBLE, via_edge BIGINT,
+                from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER,
                 lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, inner_res TINYINT, outer_res TINYINT
             )
         """)
@@ -806,7 +806,7 @@ class ShortcutProcessor:
             new_count = self.con.sql(f"SELECT count(*) FROM {table_name}").fetchone()[0]
         else:
             self.con.execute(f"DROP TABLE IF EXISTS {table_name}")
-            self.con.execute(f"CREATE TABLE {table_name} (from_edge BIGINT, to_edge BIGINT, cost DOUBLE, via_edge BIGINT, lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, current_cell BIGINT)")
+            self.con.execute(f"CREATE TABLE {table_name} (from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER, lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, current_cell BIGINT)")
             
         return active_count, new_count, 0
 

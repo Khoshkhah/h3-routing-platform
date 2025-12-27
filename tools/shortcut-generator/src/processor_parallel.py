@@ -6,6 +6,7 @@ parallel processing for Phase 1 and Phase 4 where chunks are independent.
 """
 import logging
 import time
+import gc
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
@@ -59,7 +60,7 @@ def process_chunk_phase1(args):
         # Create table to collect deactivated shortcuts
         con.execute("""
             CREATE TABLE deactivated (
-                from_edge BIGINT, to_edge BIGINT, cost DOUBLE, via_edge BIGINT,
+                from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER,
                 lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, 
                 inner_res TINYINT, outer_res TINYINT
             )
@@ -168,7 +169,7 @@ def process_chunk_phase4(args):
         # Create table to collect deactivated shortcuts
         con.execute("""
             CREATE TABLE deactivated (
-                from_edge BIGINT, to_edge BIGINT, cost DOUBLE, via_edge BIGINT,
+                from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER,
                 lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, 
                 inner_res TINYINT, outer_res TINYINT
             )
@@ -328,7 +329,7 @@ def _process_cell_forward_worker(con, table_name: str):
         con.execute(f"DROP TABLE IF EXISTS {table_name}_expanded")
         con.execute(f"""
             CREATE TABLE {table_name} (
-                from_edge BIGINT, to_edge BIGINT, cost DOUBLE, via_edge BIGINT,
+                from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER,
                 lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, 
                 inner_res TINYINT, outer_res TINYINT
             )
@@ -395,7 +396,7 @@ def _process_cell_forward_worker(con, table_name: str, method: str = "SCIPY", nu
         con.execute(f"DROP TABLE {table_name}")
         con.execute(f"""
             CREATE TABLE {table_name} (
-                from_edge BIGINT, to_edge BIGINT, cost DOUBLE, via_edge BIGINT,
+                from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER,
                 lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, 
                 inner_res TINYINT, outer_res TINYINT
             )
@@ -645,14 +646,14 @@ class ParallelShortcutProcessor:
         # Ensure tables exist
         self.con.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.forward_deactivated_table} (
-                from_edge BIGINT, to_edge BIGINT, cost DOUBLE, via_edge BIGINT,
+                from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER,
                 lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, 
                 inner_res TINYINT, outer_res TINYINT
             )
         """)
         self.con.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.backward_deactivated_table} (
-                from_edge BIGINT, to_edge BIGINT, cost DOUBLE, via_edge BIGINT,
+                from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER,
                 lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, 
                 inner_res TINYINT, outer_res TINYINT
             )
@@ -945,8 +946,9 @@ class ParallelShortcutProcessor:
                         """)
                         total_deactivated += count
                     
-                    # Drop cell table
+                    # Drop cell table and cleanup memory
                     self.con.execute(f"DROP TABLE IF EXISTS cell_{cell_id}")
+                    gc.collect()  # Per-cell memory cleanup
                     logger.info(f"  [{i}/{len(cell_ids)}] Cell {cell_id} complete in {duration:.2f}s: {count} shortcuts, total: {total_deactivated}")
         else:
             logger.info(f"  Starting with {len(cell_ids)} cells ({total_shortcuts} shortcuts) sequentially...")
@@ -963,8 +965,9 @@ class ParallelShortcutProcessor:
                     """)
                     total_deactivated += count
                 
-                # Drop cell table
+                # Drop cell table and cleanup memory
                 self.con.execute(f"DROP TABLE IF EXISTS cell_{cell_id}")
+                gc.collect()  # Per-cell memory cleanup
                 logger.info(f"  [{i}/{len(cell_ids)}] Cell {cell_id} complete in {duration:.2f}s: {count} shortcuts, total: {total_deactivated}")
         
         # Log PURE vs SCIPY timing summary
@@ -1009,7 +1012,7 @@ class ParallelShortcutProcessor:
         self.con.execute(f"DELETE FROM {self.backward_deactivated_table}")
         self.con.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.backward_deactivated_table} (
-                from_edge BIGINT, to_edge BIGINT, cost DOUBLE, via_edge BIGINT,
+                from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER,
                 lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, inner_res TINYINT, outer_res TINYINT, current_cell BIGINT
             )
         """)
