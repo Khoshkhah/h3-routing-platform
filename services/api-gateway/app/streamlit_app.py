@@ -268,6 +268,13 @@ html_code = f"""
                 <div class="marker-icon marker-B"></div>
                 <div id="coord-b">Drag marker B</div>
             </div>
+            
+            <div style="padding: 10px; border-top: 1px solid #ddd; margin-top: 10px;">
+                <label style="font-size: 13px; color: #333; display: flex; align-items: center; cursor: pointer;">
+                    <input type="checkbox" id="show-debug-cells" checked style="margin-right: 8px;">
+                    Show Debug Cells (H3)
+                </label>
+            </div>
         </div>
         <div class="results" id="results-area">
             <div class="stat-card">
@@ -718,6 +725,15 @@ html_code = f"""
 
         // --- 7. PARAMETER CHANGE HANDLERS ---
         document.getElementById('num-candidates').addEventListener('change', onDrag);
+        // Toggle Debug Cells
+        document.getElementById('show-debug-cells').addEventListener('change', function() {{
+            // Re-render debug layer visibility
+            if (this.checked) {{
+                map.addLayer(debugLayer);
+            }} else {{
+                map.removeLayer(debugLayer);
+            }}
+        }});
 
         // Initial Call
         onDrag();
