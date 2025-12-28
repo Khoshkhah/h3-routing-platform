@@ -58,7 +58,7 @@ When a request hits `http://localhost:8082/route`:
     *   The `H3` index is just math (bitwise operations on 64-bit integers). It's extremely fast.
     *   It converts `(lat, lon)` -> `H3 Cell ID (uint64_t)`.
     *   It looks up which edges are in that cell bucket.
-4.  **Dijkstra (Heap Operations)**:
+### 4. Hierarchy Algorithm (Heap Operations):
     *   Uses a `std::priority_queue`.
     *   Pops an Edge ID.
     *   Accesses `fwd_adj_[edge_id]` in RAM to get neighbors.

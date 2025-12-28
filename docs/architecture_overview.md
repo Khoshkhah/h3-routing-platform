@@ -18,7 +18,7 @@ graph LR
 
     subgraph "2. C++ Routing Backend :8082"
         ServerCPP["Routing Server (C++)"]
-        Algorithm["CH Algorithm (Bi-Dijkstra)"]
+        Algorithm["CH Algorithm (Bi-Hierarchy)"]
         Expander[Path Expander]
         
         Shortcuts -->|Load| ServerCPP
@@ -59,7 +59,7 @@ Before the server starts, we process raw map data into a format optimized for ro
 ### 2. C++ Routing Backend (Port 8082)
 The heavy lifter. A high-performance C++ server.
 *   **Efficiency**: Written in C++ for raw speed and memory efficiency.
-*   **The Algorithm**: Runs **Bidirectional Dijkstra** on the shortcut graph.
+*   **The Algorithm**: Runs **Bidirectional Hierarchy Algorithm** on the shortcut graph.
     *   Uses **H3 Spatial Pruning** to limit the search space (only looking at relevant hexagonal cells).
     *   **Expand Path**: Converts the abstract "shortcut path" (e.g., A -> D) back into the actual road segments (A -> B -> C -> D).
 *   **API**: Exposes raw endpoints like `/route_by_edge` and `/health`.
@@ -85,7 +85,7 @@ The visual frontend for interacting with the engine.
     *   Finds the nearest road edge to each coordinate.
     *   Sends a request to the **C++ Backend (:8082)**: *"Find route from Edge 100 to Edge 200"*.
 4.  **C++ Backend**:
-    *   Runs Bi-directional Dijkstra.
+    *   Runs Bidirectional Hierarchy Algorithm.
     *   Finds a path of shortcuts.
     *   **Expands** the path (recursively resolving `via_edge`s) to get the full list of road edges.
     *   Returns the geometry (GeoJSON) and stats.
@@ -112,7 +112,7 @@ We can't route on coordinates directly. We need Graph Edge IDs.
 *   **Result**: Finds the nearest road edge, e.g., `Edge ID: 1593`.
 *   *(Repeated for target location)*
 
-### 3. The Core Routing Algorithm (Bi-Dijkstra)
+### 3. The Core Routing Algorithm (Bi-Hierarchy)
 Now we run the **Contraction Hierarchy query** on the *Shortcut Graph*.
 *   **Function**: `query_pruned(source=1593, target=4835)`
 *   **Process**:

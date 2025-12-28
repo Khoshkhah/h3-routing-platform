@@ -17,9 +17,9 @@ The primary routing method uses **Contraction Hierarchies**. This approach invol
 - **Node Contraction**: When a node is "contracted," shortcuts are added between its neighbors to preserve the shortest paths that went through it.
 - **Search Space**: At query time, we only explore edges that lead to higher-importance nodes (the "upwards" and "downwards" cones), which drastically reduces the search space.
 
-## 2. Bi-directional Dijkstra
+## 2. Bidirectional Hierarchy Algorithm
 
-For both standard searches and CH queries, we use a **Bi-directional Dijkstra** implementation.
+For both standard searches and CH queries, we use a **Bidirectional Hierarchy Algorithm** implementation.
 
 - **Forward Search**: Explores outgoing edges from the source.
 - **Backward Search**: Explores incoming edges from the target.
