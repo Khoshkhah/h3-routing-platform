@@ -6,246 +6,68 @@ nav_order: 6
 
 # SDK Manual
 
-This guide documents the client libraries available for interacting with the **H3 Routing Platform**.
+This document is the official developer guide for the H3 Routing Platform client libraries.
 
 ## Python SDK
 
-The Python SDK provides a user-friendly wrapper around the HTTP API.
+The Python SDK provides a high-level, asynchronous-ready interface for interacting with the routing engine.
 
 ### Installation
-
 ```bash
-# Development mode (editable)
 pip install -e sdk/python
-
-# Or copy the module
-cp -r sdk/python/h3_routing_client your_project/
 ```
 
-### Quick Start
+### Core Client: RoutingClient
+`RoutingClient(base_url="http://localhost:8082")`
 
-```python
-from h3_routing_client import RoutingClient
+#### Methods
 
-client = RoutingClient(base_url="http://localhost:8082")
+**`route(dataset, start_lat, start_lng, end_lat, end_lng, mode="knn", algorithm="pruned")`**  
+Computes a shortest path between two coordinates.  
+- **Returns**: `RouteResponse` object.
 
-# Check if engine is online
-health = client.health()
-print(f"Status: {health['status']}")
-print(f"Loaded datasets: {health['datasets_loaded']}")
+**`nearest_edges(dataset, lat, lon, k=5)`**  
+Finds the road segments closest to a specific location.
 
-# Calculate a route
-response = client.route(
-    dataset="burnaby",
-    start_lat=49.25, start_lng=-123.12,
-    end_lat=49.28, end_lng=-123.11
-)
+**`load_dataset(name, shortcuts_path, edges_path)`**  
+Dynamically loads a graph into the engine memory.
 
-if response.success:
-    print(f"Distance: {response.distance_meters} meters")
-    print(f"Runtime: {response.runtime_ms} ms")
-else:
-    print(f"Error: {response.error}")
-```
+**`unload_dataset(name)`**  
+Frees memory by removing a dataset from the engine.
 
----
-
-### API Reference
-
-#### `RoutingClient(base_url)`
-
-Initialize the client.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `base_url` | str | `http://localhost:8082` | URL of the C++ Routing Engine |
-
----
-
-#### `client.health() -> Dict`
-
-Check server status and list loaded datasets.
-
-**Returns:**
-```python
-{
-    "status": "healthy",
-    "datasets_loaded": ["burnaby", "vancouver"]
-}
-```
-
----
-
-#### `client.route(...) -> RouteResponse`
-
-Calculate the shortest path between two points.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `dataset` | str | *required* | Dataset name (e.g., "burnaby") |
-| `start_lat` | float | *required* | Origin latitude |
-| `start_lng` | float | *required* | Origin longitude |
-| `end_lat` | float | *required* | Destination latitude |
-| `end_lng` | float | *required* | Destination longitude |
-| `mode` | str | `"knn"` | `"knn"`, `"one_to_one"`, `"one_to_one_v2"`, `"radius"` |
-| `num_candidates` | int | `3` | Edges to check at start/end |
-| `algorithm` | str | `"pruned"` | `"pruned"`, `"classic"`, `"dijkstra"` |
-
-> [!NOTE]
-> **Dijkstra Mode**: While significantly slower than CH (~40x), Dijkstra mode provides an exact shortest path ground-truth by searching the entire shortcut graph without CH constraints.
-
-**Returns `RouteResponse`:**
-
+### Response Object: RouteResponse
 | Field | Type | Description |
-|-------|------|-------------|
-| `success` | bool | Whether route was found |
-| `distance` | float | Total cost (typically travel time in seconds) |
-| `distance_meters` | float | Route length in meters |
-| `cost` | float | Alias for `distance` |
-| `runtime_ms` | float | Query time in milliseconds |
-| `path` | List[int] | List of base edge IDs |
-| `geojson` | Dict | GeoJSON FeatureCollection for visualization |
-| `error` | str | Error message if `success=False` |
+| :--- | :--- | :--- |
+| `success` | bool | Boolean reflecting query status. |
+| `cost` | float | Total weight (e.g. travel time). |
+| `distance_meters`| float | Physical length in meters. |
+| `path` | list | List of raw base edge IDs. |
+| `geojson` | dict | GeoJSON LineString feature. |
 
----
+## C++ SDK
 
-#### `client.load_dataset(name, shortcuts_path, edges_path) -> bool`
-
-Dynamically load a dataset into the engine.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `name` | str | Unique dataset identifier |
-| `shortcuts_path` | str | Absolute path to shortcuts parquet/db |
-| `edges_path` | str | Absolute path to edges CSV |
-
-**Returns:** `True` if loaded successfully.
-
----
-
-#### `client.unload_dataset(name) -> bool`
-
-Unload a dataset from engine memory.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `name` | str | Dataset name to unload |
-
-**Returns:** `True` if unloaded successfully.
-
----
-
-#### `client.nearest_edges(dataset, lat, lon, k=5, radius_meters=100) -> List[Dict]`
-
-Find the nearest graph edges to a location. Useful for debugging or manual edge snapping.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `dataset` | str | *required* | Dataset name |
-| `lat` | float | *required* | Query latitude |
-| `lon` | float | *required* | Query longitude |
-| `k` | int | `5` | Number of edges to return |
-| `radius_meters` | float | `100.0` | Maximum search radius |
-
-**Returns:** List of edge dictionaries:
-```python
-[
-    {"edge_id": 1502, "distance": 12.5, "length": 50.0, "cost": 50.0},
-    {"edge_id": 1503, "distance": 18.2, "length": 32.0, "cost": 32.0}
-]
-```
-
-**Example:**
-```python
-edges = client.nearest_edges("burnaby", lat=49.25, lon=-123.12, k=3)
-for edge in edges:
-    print(f"Edge {edge['edge_id']}: {edge['distance']:.1f}m away")
-```
-
-The C++ SDK is a lightweight header-only library using `libcurl` for HTTP requests.
+A header-only lightweight client designed for integration into C++ performance-critical applications.
 
 ### Requirements
-- `libcurl` (for HTTP)
-- `nlohmann/json.hpp` (for JSON parsing)
+- libcurl
+- nlohmann/json
 
-### Installation
-
-**CMake:**
-```cmake
-include_directories(${PROJECT_DIR}/sdk/cpp)
-target_link_libraries(my_app curl)
-```
-
-**Include:**
+### Quick Integration
 ```cpp
 #include "routing_client.hpp"
+
+routing::Client client("http://localhost:8082");
+routing::RouteRequest req = { "vancouver", 49.2, -123.1, 49.3, -123.2 };
+auto response = client.route(req);
 ```
 
----
-
-### API Reference
-
-#### `routing::Client(base_url)`
-
-| Parameter | Type | Default |
-|-----------|------|---------|
-| `base_url` | std::string | `"http://localhost:8082"` |
-
----
-
-#### `routing::RouteRequest`
-
-```cpp
-struct RouteRequest {
-    std::string dataset;        // Required: dataset name
-    double start_lat, start_lng; // Required: origin
-    double end_lat, end_lng;     // Required: destination
-    std::string mode = "knn";    // Optional: "knn", "one_to_one"
-};
-```
-
----
-
-#### `client.route(RouteRequest) -> nlohmann::json`
-
-Sends a routing request and returns the raw JSON response.
-
-**Example:**
-```cpp
-#include "routing_client.hpp"
-#include <iostream>
-
-int main() {
-    routing::Client client("http://localhost:8082");
-
-    routing::RouteRequest req;
-    req.dataset = "burnaby";
-    req.start_lat = 49.25;
-    req.start_lng = -123.12;
-    req.end_lat = 49.28;
-    req.end_lng = -123.11;
-
-    auto response = client.route(req);
-
-    if (response.contains("success") && response["success"]) {
-        auto route = response["route"];
-        std::cout << "Distance: " << route["distance_meters"] << " m\n";
-        std::cout << "Path edges: " << route["path"].size() << "\n";
-    } else {
-        std::cerr << "Error: " << response["error"] << "\n";
-    }
-
-    return 0;
-}
-```
-
-**Response fields:**
-- `success` (bool): Whether route found
-- `route.distance` (float): Cost
-- `route.distance_meters` (float): Length in meters
-- `route.path` (array): Edge IDs
-- `route.geojson` (object): GeoJSON geometry
-- `error` (string): Error message if failed
+### Reference: routing::RouteRequest
+| Member | Type | Default |
+| :--- | :--- | :--- |
+| `dataset` | string | *required* |
+| `start_lat`, `start_lng` | double | *required* |
+| `end_lat`, `end_lng` | double | *required* |
+| `mode` | string | "knn" |
 
 ---
 

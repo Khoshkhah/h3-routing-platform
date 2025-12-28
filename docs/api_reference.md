@@ -1,151 +1,78 @@
----
-layout: default
-title: API Reference
-nav_order: 5
----
+# API Reference
 
-# Routing Engine API Reference
+This document provides a detailed specification for the H3 Routing Engine REST API.
 
-This document details the HTTP endpoints exposed by the C++ Routing Engine (default port: `8082`).
+## Core Endpoints
 
-## Base URL
-`http://localhost:8082`
+### POST /route
+Finds the shortest path between two coordinate pairs using the platform's routing pipeline.
 
----
+#### Request Parameters (JSON)
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `dataset` | string | Name of the pre-loaded dataset to query. |
+| `start_lat`, `start_lng` | float | Coordinates of the origin point. |
+| `end_lat`, `end_lng` | float | Coordinates of the destination point. |
+| `mode` | string | Search strategy: `knn`, `radius`, `one_to_one`, `one_to_one_v2`. |
+| `algorithm` | string | Pathfinding logic: `pruned`, `classic`, `dijkstra`. |
+| `num_candidates` | integer | Number of nearest edges to consider (for `knn` mode). |
 
-## 1. Health Check
-**Endpoint**: `GET /health`
-*   **Description**: Checks server status and lists loaded datasets.
-*   **Usage**: Used by Python middleware to wait for server readiness.
+#### Response Schema
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `success` | boolean | Indicates if a route was successfully computed. |
+| `route.distance` | float | Total weight (cost) of the path. |
+| `route.distance_meters`| float | Physical length of the path in meters. |
+| `route.path` | array | Sequential list of base road edge IDs. |
+| `route.geojson` | object | GeoJSON LineString representation of the path. |
 
-### Response
-```json
-{
-  "status": "healthy",
-  "datasets_loaded": ["burnaby", "vancouver"]
-}
+#### Example
+```bash
+curl -X POST http://localhost:8082/route \
+-H "Content-Type: application/json" \
+-d '{"dataset": "vancouver", "start_lat": 49.2, "start_lng": -123.1, ...}'
 ```
 
 ---
 
-## 2. Route (Coordinates)
-**Endpoint**: `POST /route`
-*   **Description**: Finds the shortest path between two coordinate pairs using the full pipeline (Index Lookup -> CH Query -> Path Expansion -> GeoJSON).
+### GET /nearest_edges
+Retrieves the road edges closest to a specific geographic point.
 
-### Request
-```json
-{
-  "dataset": "burnaby",
-  "start_lat": 49.246292,
-  "start_lng": -123.116226,
-  "end_lat": 49.262292,
-  "end_lng": -123.126226,
-  "mode": "knn",           // "knn", "radius", "one_to_one", "one_to_one_v2"
-  "algorithm": "pruned",   // "pruned", "classic", "dijkstra"
-  "num_candidates": 3,     // Edges to consider near start/end
-  "expand": true           // Set false for shortcut-level path only (debug)
-}
-```
+#### Parameters (Query)
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `lat`, `lon` | float | Geographic coordinates for the search. |
+| `k` | integer | Maximum number of edges to return (default: 5). |
+| `dataset` | string | Scope the search to this dataset. |
 
-### Parameters
-*   `mode`: Routing mode.
-    *   `knn`: Multi-source CH query using k-nearest edges.
-    *   `radius`: Multi-source CH query within a radius.
-    *   `one_to_one`: Standard point-to-point query (Classic CH).
-    *   `one_to_one_v2`: High-performance point-to-point query (Pruned CH).
-*   `algorithm`: Search algorithm to use.
-    *   `pruned`: Fast query using H3 resolution-based pruning (requires `one_to_one_v2`).
-    *   `classic`: Traditional bidirectional Dijkstra on CH shortcut graph.
-    *   `dijkstra`: Standard bidirectional Dijkstra on the base road network (calculates from the shortcut graph but ignores CH hierarchy constraints). Useful for ground-truth verification.
-
-> [!TIP]
-> All cost and distance values are now returned with 32-bit `float` precision to optimize memory overhead by 78% on large datasets.
-
-### Response
-```json
-{
-  "success": true,
-  "dataset": "burnaby",
-  "route": {
-    "distance": 845.2,         // Total cost
-    "distance_meters": 845.2,  // Metric length
-    "runtime_ms": 1.2,
-    "path": [101, 102, 103],   // Base Edge IDs
-    "geojson": { ... }         // FeatureCollection LineString
-  },
-  "timing_breakdown": {
-    "find_nearest_us": 45.0,
-    "search_us": 250.0,
-    "expand_us": 15.0,
-    "geojson_us": 20.0
-  }
-}
-```
-
----
-
-## 3. Nearest Edges
-**Endpoint**: `GET /nearest_edges`
-*   **Description**: Finds graph edges closest to a location. Useful for debugging or snapping.
-
-### Parameters
-*   `lat`, `lon`: Coordinates
-*   `k`: Number of edges to return (default: 5)
-*   `dataset`: Dataset name
-
-### Response
+#### Response Example
 ```json
 {
   "edges": [
-    {
-      "edge_id": 1502,
-      "distance": 12.5,  // Meters from query point
-      "length": 50.0,    // Edge length
-      "cost": 50.0
-    }
+    { "edge_id": 101, "distance": 5.2, "cost": 120.0 },
+    { "edge_id": 102, "distance": 14.8, "cost": 150.0 }
   ]
 }
 ```
 
 ---
 
-## 4. Load Dataset
-**Endpoint**: `POST /load_dataset`
-*   **Description**: Trigger the engine to load a new dataset from disk into memory.
+### POST /load_dataset
+Instructs the engine to load a new dataset into memory.
 
-### Request
-```json
-{
-  "dataset": "new_city",
-  "shortcuts_path": "/abs/path/to/shortcuts.parquet",
-  "edges_path": "/abs/path/to/edges.csv"
-}
-```
+#### Request Schema
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `dataset` | string | Unique identifier for the dataset. |
+| `shortcuts_path` | string | File path to the augmented shortcut graph (.parquet). |
+| `edges_path` | string | File path to the edge metadata (.csv). |
 
 ---
 
-## 6. Unload Dataset
-**Endpoint**: `POST /unload_dataset`
-*   **Description**: Free up memory by unloading a dataset.
-
-### Request
-```json
-{
-  "dataset": "dataset_name"
-}
-```
+### POST /unload_dataset
+Removes a dataset and frees associated physical memory via `malloc_trim`.
 
 ---
 
-## 7. Route by Edge ID (Debug)
-**Endpoint**: `POST /route_by_edge`
-*   **Description**: Skip spatial lookup and route directly between graph edge IDs.
-
-### Request
-```json
-{
-  "dataset": "burnaby",
-  "source_edge": 1500,
-  "target_edge": 2900
-}
-```
+### GET /health
+Returns the current server status and a list of all resident datasets.

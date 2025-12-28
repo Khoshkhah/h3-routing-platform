@@ -13,14 +13,14 @@ The H3 Routing Platform provides a complete end-to-end solution for preparing, h
 
 ## Key Features
 
-- 🚀 **High Performance**: Sub-millisecond routing queries on metropolitan-scale networks.
-- 📉 **Memory Optimized**: 78% memory reduction using custom CSR packing (Vancouver 55M shortcuts in ~1.6 GB).
-- 🛠️ **Modular Architecture**: 
+- **High Performance**: Sub-millisecond routing queries on metropolitan-scale networks.
+- **Memory Optimized**: 78% memory reduction using custom CSR packing (Vancouver 55M shortcuts in ~1.6 GB).
+- **Modular Architecture**: 
   - **C++ Engine**: Contiguous memory graph and core routing logic.
   - **Python Processor**: Flexible offline data preparation using DuckDB.
   - **FastAPI Gateway**: Secure and extensible middleware.
-- 🗺️ **H3 Integration**: Intelligent spatial pruning for reduced search space.
-- 🧪 **Ground-Truth Support**: Integrated Dijkstra algorithm for exact path verification.
+- **H3 Integration**: Intelligent spatial pruning for reduced search space.
+- **Ground-Truth Support**: Integrated Dijkstra algorithm for exact path verification.
 
 ## Getting Started
 

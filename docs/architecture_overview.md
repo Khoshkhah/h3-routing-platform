@@ -148,9 +148,9 @@ We chose the **HTTP Microservice** pattern for high availability and robustness:
 
 | Feature | HTTP Microservice (Current) | FFI (pybind11 / ctypes) |
 | :--- | :--- | :--- |
-| **Stability** | ✅ **Robust**. If C++ crashes (segfault), the Python web server survives and returns "503 Error". | ❌ **Fragile**. A singe C++ crash kills the entire Python process. |
-| **Concurrency** | ✅ **True Parallelism**. C++ runs in a separate process, ignoring Python's GIL. Can utilize all cores. | ❌ **GIL Limited**. Python calls block until C++ returns, potentially freezing the web server unless carefully managed. |
-| **Decoupling** | ✅ **Language Agnostic**. Frontend can be rewritten in Node.js/Go/Rust without touching the backend. | ❌ **Tightly Coupled**. Hard dependency on Python C-API versions. |
+| **Stability** | **Robust**. If C++ crashes (segfault), the Python web server survives and returns "503 Error". | **Fragile**. A singe C++ crash kills the entire Python process. |
+| **Concurrency** | **True Parallelism**. C++ runs in a separate process, ignoring Python's GIL. Can utilize all cores. | **GIL Limited**. Python calls block until C++ returns, potentially freezing the web server unless carefully managed. |
+| **Decoupling** | **Language Agnostic**. Frontend can be rewritten in Node.js/Go/Rust without touching the backend. | **Tightly Coupled**. Hard dependency on Python C-API versions. |
 | **Use Case** | Best for **API Servers** and Web Apps. | Best for **Data Science Batch Processing** (zero-copy need). |
 
 ## Performance & Scalability
@@ -166,7 +166,7 @@ Is this architecture "fast enough" for high-load production? **Yes.**
 ### Bottlenecks & Optimizations:
 *   **JSON Overhead**: For extremely high usage (>10,000 req/sec), parsing JSON becomes expensive.
     *   *Optimization*: Use **gRPC** or **FlatBuffers** instead of JSON.
-*   **Network Hop**: Python → C++ adds extreme micro-latency (~0.5ms).
+*   **Network Hop**: Python -> C++ adds extreme micro-latency (~0.5ms).
     *   *Optimization*: Use **Keep-Alive** (HTTP Persistent Connections) to reuse TCP sockets.
 *   **Python Blocking**: The current Python middleware uses `requests` (blocking).
     *   *Optimization*: Use `aiohttp` or run requests in a thread pool to avoid blocking the Python event loop under load.
