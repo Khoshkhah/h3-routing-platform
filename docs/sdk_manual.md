@@ -6,145 +6,206 @@ nav_order: 6
 
 # SDK Manual
 
-This document is the official developer guide for the H3 Routing Platform client libraries.
+This document provides a high-fidelity reference for the H3 Routing Platform client libraries.
 
 ## Python SDK
 
-The Python SDK provides a high-level, asynchronous-ready interface for interacting with the routing engine.
+The Python SDK is the primary interface for interacting with the routing engine, supporting all features including dynamic dataset management and advanced routing modes.
 
-### Installation
+### installation
+
 ```bash
 pip install -e sdk/python
 ```
 
-### Core Client: RoutingClient
-`RoutingClient(base_url="http://localhost:8082")`
+---
 
-#### Methods
+### RoutingClient
 
-**`route(dataset, start_lat, start_lng, end_lat, end_lng, mode="knn", algorithm="pruned")`**  
-Computes a shortest path between two coordinates.  
-- **Returns**: `RouteResponse` object.
+Constructor for the routing client.
 
-**`nearest_edges(dataset, lat, lon, k=5)`**  
-Finds the road segments closest to a specific location.
+#### Arguments
 
-**`load_dataset(name, shortcuts_path, edges_path)`**  
-Dynamically loads a graph into the engine memory.
+| Name | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `base_url` | `str` | `"http://localhost:8082"` | URL of the Routing Engine or API Gateway. |
+| `config_path` | `str` | `None` | Optional path to `datasets.yaml` for local resolution. |
 
-**`unload_dataset(name)`**  
-Frees memory by removing a dataset from the engine.
+#### Usage
+```python
+from h3_routing_client import RoutingClient
+client = RoutingClient(base_url="http://localhost:8082")
+```
 
-### Response Object: RouteResponse
-| Field | Type | Description |
+---
+
+### health
+
+Check the current status of the server and list loaded datasets.
+
+#### Arguments
+None.
+
+#### Return Value
+Returns a `dict` containing:
+- `status`: String (e.g., "healthy").
+- `datasets_loaded`: List of strings showing active datasets.
+
+#### Usage
+```python
+status = client.health()
+print(status['datasets_loaded'])
+```
+
+---
+
+### route
+
+Calculate the shortest path between two geographic points.
+
+#### Arguments
+
+| Name | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `dataset` | `str` | *required* | Target dataset name. |
+| `start_lat`, `start_lng` | `float` | *required* | Origin coordinates. |
+| `end_lat`, `end_lng` | `float` | *required* | Destination coordinates. |
+| `mode` | `str` | `"knn"` | Nearest edge search mode (`knn`, `radius`, `one_to_one`). |
+| `num_candidates` | `int` | `3` | Number of candidate edges for `knn` mode. |
+| `algorithm` | `str` | `"pruned"` | Routing logic (`pruned`, `classic`, `dijkstra`). |
+
+#### Return Value
+Returns a `RouteResponse` object:
+- `success`: `bool`
+- `cost`: `float` (Alias for `distance`)
+- `distance_meters`: `float` (Physical length)
+- `runtime_ms`: `float`
+- `path`: `List[int]` (Raw base edge IDs)
+- `geojson`: `dict` (GeoJSON LineString)
+- `error`: `str` (Optional error message)
+
+#### Usage
+```python
+response = client.route("vancouver", 49.2, -123.1, 49.3, -123.2)
+if response.success:
+    print(f"Cost: {response.cost}")
+```
+
+---
+
+### load_dataset
+
+Dynamically load a dataset into the engine memory.
+
+#### Arguments
+
+| Name | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `name` | `str` | *required* | Dataset identifier. |
+| `db_path` | `str` | `None` | Path to the DuckDB database (preferred). |
+| `shortcuts_path` | `str` | `None` | Path to parquet shortcuts (Legacy). |
+| `edges_path` | `str` | `None` | Path to edges metadata (Legacy). |
+
+#### Return Value
+Returns `True` if successfully loaded, `False` otherwise.
+
+#### Usage
+```python
+client.load_dataset("burnaby", db_path="/path/to/burnaby.db")
+```
+
+---
+
+### nearest_edges
+
+Retrieve road segments closest to a specific coordinate.
+
+#### Arguments
+
+| Name | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `dataset` | `str` | *required* | Target dataset. |
+| `lat`, `lon` | `float` | *required* | Query coordinates. |
+| `k` | `int` | `5` | Maximum number of edges to return. |
+| `radius_meters`| `float` | `100.0` | Maximum search radius. |
+
+#### Return Value
+Returns a `List[Dict]` where each dict contains:
+- `edge_id`: `int`
+- `distance`: `float` (Meters from point)
+- `cost`: `float`
+
+---
+
+### route_by_edge (Debug)
+
+Computes a route directly between two static edge IDs, skipping spatial lookup.
+
+#### Arguments
+
+| Name | Type | Description |
 | :--- | :--- | :--- |
-| `success` | bool | Boolean reflecting query status. |
-| `cost` | float | Total weight (e.g. travel time). |
-| `distance_meters`| float | Physical length in meters. |
-| `path` | list | List of raw base edge IDs. |
-| `geojson` | dict | GeoJSON LineString feature. |
+| `dataset` | `str` | Target dataset. |
+| `source_edge` | `int` | Internal graph ID for source. |
+| `target_edge` | `int` | Internal graph ID for destination. |
+
+---
+
+### route_by_edge_raw (Debug)
+
+Similar to `route_by_edge`, but returns the raw shortcut-level path without expansion into base road edges. Useful for visualizing the CH hierarchy.
+
+---
+
+### route_raw (Debug)
+
+Computes a route using coordinates but returns the unexpanded shortcut path.
+
+---
+
+### Internal Classes & Properties
+
+#### RouteResponse
+The object returned by routing methods contains several convenience properties.
+
+- **`cost`**: Returns the total optimization weight of the path (alias for `distance`).
+- **`distance_meters`**: Returns the physical length of the path in meters.
+- **`path`**: Provides the ordered sequence of base road edge IDs.
+- **`geojson`**: A standard GeoJSON LineString dictionary ready for visualization.
+
+---
 
 ## C++ SDK
 
-A header-only lightweight client designed for integration into C++ performance-critical applications.
+A header-only lightweight client designed for embedding into performance-critical services.
 
-### Requirements
-- libcurl
-- nlohmann/json
+### routing::Client
 
-### Quick Integration
+Constructor for the C++ client.
+
+#### Arguments
+
+| Name | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `url` | `std::string` | `"http://localhost:8082"` | Base URL of the engine. |
+
+---
+
+### route
+
+Executes a routing request.
+
+#### Arguments
+
+| Name | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `req` | `routing::RouteRequest` | *required*| Structure containing `dataset`, `start_lat`, `start_lng`, `end_lat`, `end_lng`, and `mode`. |
+
+#### Return Value
+Returns a `nlohmann::json` object containing the query results or an `error` key.
+
+#### Usage
 ```cpp
-#include "routing_client.hpp"
-
-routing::Client client("http://localhost:8082");
-routing::RouteRequest req = { "vancouver", 49.2, -123.1, 49.3, -123.2 };
-auto response = client.route(req);
+routing::RouteRequest req = {"burnaby", 49.2, -123.1, 49.25, -123.15};
+auto res = client.route(req);
 ```
-
-### Reference: routing::RouteRequest
-| Member | Type | Default |
-| :--- | :--- | :--- |
-| `dataset` | string | *required* |
-| `start_lat`, `start_lng` | double | *required* |
-| `end_lat`, `end_lng` | double | *required* |
-| `mode` | string | "knn" |
-
----
-
-### Memory Efficiency
-
-The CSR engine is highly optimized for large-scale networks. 
-- **Compact Storage**: Road graphs are stored in 24-byte contiguous blocks, using bitfields to minimize padding.
-- **Active Reclamation**: The server aggressively releases memory back to the OS using `malloc_trim` after dataset unloads and loads.
-- **Scaling**: A metropolitan area with 55M shortcuts (like Metro Vancouver) fits in approximately 1.6 GB of RSS.
-
----
-
-## Error Handling
-
-### Python
-```python
-response = client.route(...)
-if not response.success:
-    if "not loaded" in response.error:
-        # Dataset not loaded
-        client.load_dataset("burnaby", "/path/to/db", "/path/to/edges")
-    else:
-        print(f"Route failed: {response.error}")
-```
-
-### C++
-```cpp
-auto response = client.route(req);
-if (!response.contains("success") || !response["success"]) {
-    std::cerr << "Error: " << response.value("error", "Unknown") << "\n";
-}
-```
-
----
-
-## Debug Methods
-
-These methods are for testing and development. They provide lower-level access to the routing engine.
-
-### `route_by_edge(dataset, source_edge, target_edge) -> Dict`
-
-Route between two edge IDs. **Returns expanded path** (base edge IDs).
-Bypasses nearest-edge lookup - useful when you already know the edge IDs.
-
-```python
-result = client.route_by_edge("burnaby", source_edge=1500, target_edge=2900)
-if result["success"]:
-    print(f"Path: {result['route']['path']}")  # Expanded base edges
-    print(f"Distance: {result['route']['distance_meters']}m")
-```
-
----
-
-### `route_by_edge_raw(dataset, source_edge, target_edge) -> Dict`
-
-Route between two edge IDs. **Returns shortcut-level path** (not expanded).
-Useful for debugging the contraction hierarchy structure.
-
-```python
-result = client.route_by_edge_raw("burnaby", source_edge=1500, target_edge=2900)
-if result["success"]:
-    print(f"Shortcut path: {result.get('shortcut_path', [])}")
-```
-
-> **Note**: Requires `expand=False` support in C++ engine.
-
----
-
-### `route_raw(dataset, start_lat, start_lng, end_lat, end_lng) -> Dict`
-
-Route by coordinates. **Returns shortcut-level path** (not expanded).
-Useful for debugging the contraction hierarchy structure.
-
-```python
-result = client.route_raw("burnaby", 49.25, -123.12, 49.28, -123.11)
-if result["success"]:
-    print(f"Shortcut path: {result.get('shortcut_path', [])}")
-```
-
-> **Note**: Requires `expand=False` support in C++ engine.
