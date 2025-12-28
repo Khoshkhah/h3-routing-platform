@@ -30,7 +30,6 @@ datasets:
 
   - name: "metro_vancouver"
     db_path: "{data_root}/All_Vancouver.db"
-    # Hardcoding path to ensure Streamlit finds it
     boundary_path: "/home/kaveh/projects/h3-routing-platform/tools/osm-importer/data/boundaries/All_Vancouver.geojson"
     center: [49.25, -123.00]
     zoom: 11

@@ -1,0 +1,6 @@
+setup.py
+h3_routing_platform_client.egg-info/PKG-INFO
+h3_routing_platform_client.egg-info/SOURCES.txt
+h3_routing_platform_client.egg-info/dependency_links.txt
+h3_routing_platform_client.egg-info/requires.txt
+h3_routing_platform_client.egg-info/top_level.txt

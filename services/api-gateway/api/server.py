@@ -121,7 +121,7 @@ def load_config(config_path: str = "config/datasets.yaml"):
 
     # Wait for C++ server health
     server_url = "http://localhost:8082"
-    max_retries = 10
+    max_retries = 60
     server_ready = False
     
     for i in range(max_retries):
@@ -217,15 +217,12 @@ async def list_datasets():
         info = registry.get_dataset_info(name)
         
         # Get spatial bounds (lazy load)
-        try:
-            spatial_idx = registry.get_spatial_index(name)
-            bounds = spatial_idx.get_bounds()
-            bounds_list = [bounds[0], bounds[1], bounds[2], bounds[3]]  # [minx, miny, maxx, maxy]
-            center = [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2]
-        except Exception as e:
-            logger.warning(f"Failed to get bounds for {name}: {e}")
-            bounds_list = None
-            center = None
+        # Skip spatial index loading to avoid performance hit
+        # bounds = spatial_idx.get_bounds()
+        bounds_list = None
+        if info.get('center'):
+             # Create dummy bounds around center if needed, or just leave None
+             pass
         
         result.append(DatasetInfo(
             name=name,
@@ -328,8 +325,8 @@ async def compute_route(
     if dataset not in registry.list_datasets():
         return RouteResponse(success=False, error=f"Dataset not found: {dataset}")
     
-    if search_mode not in ['knn', 'one_to_one', 'one_to_one_v2']:
-        return RouteResponse(success=False, error="search_mode must be 'knn', 'one_to_one', or 'one_to_one_v2'")
+    if search_mode not in ['knn', 'one_to_one', 'one_to_one_v2', 'dijkstra']:
+        return RouteResponse(success=False, error="search_mode must be 'knn', 'one_to_one', 'one_to_one_v2', or 'dijkstra'")
     
     try:
         # Resolve coordinate parameters: prefer current names, fall back to legacy names
@@ -417,19 +414,23 @@ async def load_dataset_endpoint(request: LoadDatasetRequest):
     # Proxy to C++ server - prefer db_path for DuckDB loading
     try:
         if info.get('db_path'):
-            # DuckDB loading (preferred)
+            # DuckDB loading (preferred for legacy engine)
             payload = {
                 "dataset": dataset,
                 "db_path": info['db_path']
             }
-        else:
-            # Legacy file loading
+        elif info.get('shortcuts_path') and info.get('edges_path'):
+            # File loading (fallback)
             payload = {
                 "dataset": dataset,
                 "shortcuts_path": info['shortcuts_path'],
                 "edges_path": info['edges_path']
             }
-        resp = requests.post("http://localhost:8082/load_dataset", json=payload, timeout=60)
+        else:
+            raise HTTPException(status_code=500, detail="Invalid dataset config: missing paths")
+        
+        logger.info(f"Sending load payload: {json.dumps(payload)}")
+        resp = requests.post("http://localhost:8082/load_dataset", json=payload, timeout=180)
         
         if resp.status_code == 200:
             return {"success": True, "message": f"Dataset {dataset} loaded"}

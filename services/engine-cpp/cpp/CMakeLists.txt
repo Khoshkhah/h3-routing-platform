@@ -83,6 +83,18 @@ target_link_libraries(routing_server PRIVATE routing_lib)
 add_executable(test_routing src/test_routing.cpp)
 target_link_libraries(test_routing PRIVATE routing_lib)
 
+# Memory Benchmark executable
+add_executable(benchmark_memory src/benchmark_memory.cpp src/csr_graph.cpp)
+target_link_libraries(benchmark_memory PRIVATE routing_lib)
+
+# CSR CLI executable
+add_executable(routing_engine_csr src/main_csr.cpp src/csr_graph.cpp)
+target_link_libraries(routing_engine_csr PRIVATE routing_lib)
+
+# CSR HTTP Server executable
+add_executable(routing_server_csr src/server_csr.cpp src/csr_graph.cpp)
+target_link_libraries(routing_server_csr PRIVATE routing_lib)
+
 # Install
-install(TARGETS routing_engine routing_server test_routing RUNTIME DESTINATION bin)
+install(TARGETS routing_engine routing_server test_routing benchmark_memory routing_engine_csr routing_server_csr RUNTIME DESTINATION bin)
 

@@ -34,11 +34,23 @@ This document details the HTTP endpoints exposed by the C++ Routing Engine (defa
   "start_lng": -123.116226,
   "end_lat": 49.262292,
   "end_lng": -123.126226,
-  "mode": "knn",           // "knn", "radius", "one_to_one"
+  "mode": "knn",           // "knn", "radius", "one_to_one", "one_to_one_v2"
+  "algorithm": "pruned",   // "pruned", "classic", "dijkstra"
   "num_candidates": 3,     // Edges to consider near start/end
   "expand": true           // Set false for shortcut-level path only (debug)
 }
 ```
+
+### Parameters
+*   `mode`: Routing mode.
+    *   `knn`: Multi-source CH query using k-nearest edges.
+    *   `radius`: Multi-source CH query within a radius.
+    *   `one_to_one`: Standard point-to-point query (Classic CH).
+    *   `one_to_one_v2`: High-performance point-to-point query (Pruned CH).
+*   `algorithm`: Search algorithm to use.
+    *   `pruned`: Fast query using H3 resolution-based pruning (requires `one_to_one_v2`).
+    *   `classic`: Traditional bidirectional Dijkstra on CH shortcut graph.
+    *   `dijkstra`: Standard bidirectional Dijkstra on the base road network (ignores shortcuts).
 
 ### Response
 ```json

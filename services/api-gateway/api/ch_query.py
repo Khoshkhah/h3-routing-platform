@@ -78,10 +78,16 @@ class CHQueryEngine:
         """
         Compute route using the routing server's full stack (NN + CH).
         """
-        # For one-to-one, we strictly want the best match (1 candidate)
-        # to ensure deterministic behavior matching the C++ engine's direct query
+        # Mapping for Dijkstra
+        algorithm = "pruned"
         if search_mode == "one_to_one":
             num_candidates = 1
+        elif search_mode == "one_to_one_v2":
+            num_candidates = 1
+        elif search_mode == "dijkstra":
+            search_mode = "one_to_one"
+            num_candidates = 1
+            algorithm = "dijkstra"
             
         try:
             payload = {
@@ -91,6 +97,7 @@ class CHQueryEngine:
                 "end_lat": end_lat,
                 "end_lng": end_lng,
                 "mode": search_mode,
+                "algorithm": algorithm,
                 "num_candidates": num_candidates,
                 "search_radius": search_radius
             }

@@ -81,9 +81,9 @@ Calculate the shortest path between two points.
 | `start_lng` | float | *required* | Origin longitude |
 | `end_lat` | float | *required* | Destination latitude |
 | `end_lng` | float | *required* | Destination longitude |
-| `mode` | str | `"knn"` | `"knn"`, `"one_to_one"`, `"radius"` |
+| `mode` | str | `"knn"` | `"knn"`, `"one_to_one"`, `"one_to_one_v2"`, `"radius"` |
 | `num_candidates` | int | `3` | Edges to check at start/end |
-| `algorithm` | str | `"pruned"` | Algorithm variant |
+| `algorithm` | str | `"pruned"` | `"pruned"`, `"classic"`, `"dijkstra"` |
 
 **Returns `RouteResponse`:**
 

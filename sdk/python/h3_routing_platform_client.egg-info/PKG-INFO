@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: h3-routing-platform-client
+Version: 0.1.0
+Summary: Python client for the C++ Routing Engine
+Author: Routing Platform Team
+Requires-Dist: requests>=2.25.0
+Requires-Dist: dataclasses>=0.6; python_version < "3.7"
+Dynamic: author
+Dynamic: requires-dist
+Dynamic: summary

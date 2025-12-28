@@ -248,6 +248,7 @@ html_code = f"""
                     <option value="knn">KNN (K-Nearest)</option>
                     <option value="one_to_one">One-to-One (Classic)</option>
                     <option value="one_to_one_v2">One-to-One (v2)</option>
+                    <option value="dijkstra">Dijkstra (No CH)</option>
                 </select>
             </div>
             <!-- Radius Container Removed -->
@@ -744,7 +745,7 @@ html_code = f"""
             const mode = this.value;
             const knnContainer = document.getElementById('knn-container');
             
-            if (mode === 'one_to_one' || mode === 'one_to_one_v2') {{
+            if (mode === 'one_to_one' || mode === 'one_to_one_v2' || mode === 'dijkstra') {{
                 knnContainer.style.display = 'none';
             }} else {{
                 knnContainer.style.display = 'block';
