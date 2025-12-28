@@ -16,7 +16,7 @@ graph LR
         Graph -->|road-to-shortcut-duckdb| Meta["Edge Metadata (CSV)"]
     end
 
-    subgraph "2. C++ Routing Backend :8082"
+    subgraph "2. C++ Routing Backend"
         ServerCPP["Routing Server (C++)"]
         Algorithm["CH Algorithm (Bi-Hierarchy)"]
         Expander[Path Expander]
@@ -29,7 +29,7 @@ graph LR
         Expander -->|Base Edges| ServerCPP
     end
 
-    subgraph "3. Application Middleware :8000"
+    subgraph "3. Application Middleware"
         API[FastAPI Python Server]
         Registry[Dataset Registry]
         
@@ -56,7 +56,7 @@ Before the server starts, we process raw map data into a format optimized for ro
     *   Uses **Contraction Hierarchies** to add "shortcut edges" that skip over less important nodes.
     *   Output: `shortcuts.parquet` (compressed graph) and `edges.csv` (metadata).
 
-### 2. C++ Routing Backend (Port 8082)
+### 2. C++ Routing Backend
 The heavy lifter. A high-performance C++ server.
 *   **Efficiency**: Written in C++ for raw speed and memory efficiency.
 *   **The Algorithm**: Runs **Bidirectional Hierarchy Algorithm** on the shortcut graph.
@@ -64,7 +64,7 @@ The heavy lifter. A high-performance C++ server.
     *   **Expand Path**: Converts the abstract "shortcut path" (e.g., A -> D) back into the actual road segments (A -> B -> C -> D).
 *   **API**: Exposes raw endpoints like `/route_by_edge` and `/health`.
 
-### 3. Application Middleware (Port 8000)
+### 3. Application Middleware
 A Python FastAPI wrapper that acts as the controller.
 *   **Coordination**: Manages configuration (`datasets.yaml`) and available datasets.
 *   **Translation**: Converts user inputs (Lat/Lon coordinates) into Graph Edge IDs.
@@ -80,10 +80,10 @@ The visual frontend for interacting with the engine.
 ## Data Flow: A Routing Request
 
 1.  **User** clicks two points on the Streamlit map.
-2.  **Streamlit** sends `start_lat/lon` and `end_lat/lon` to the **Python Middleware (:8000)**.
+2.  **Streamlit** sends `start_lat/lon` and `end_lat/lon` to the **Python Middleware**.
 3.  **Python Middleware**:
     *   Finds the nearest road edge to each coordinate.
-    *   Sends a request to the **C++ Backend (:8082)**: *"Find route from Edge 100 to Edge 200"*.
+    *   Sends a request to the **C++ Backend**: *"Find route from Edge 100 to Edge 200"*.
 4.  **C++ Backend**:
     *   Runs Bidirectional Hierarchy Algorithm.
     *   Finds a path of shortcuts.
