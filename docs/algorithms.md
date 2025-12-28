@@ -20,6 +20,12 @@ Instead of classic node-rank based Contraction Hierarchies, this platform implem
     - **Downward Edges** (`inside = -1`): Edges that exit a higher-level cell into a lower-level one.
 - **Search Space**: At query time, the bidirectional search only explores "upward" edges from the source and "downward" edges toward the destination, drastically reducing the number of edges visited.
 
+### Theoretical Basis: Tree Decomposition
+The H3 Spatial Hierarchy is a practical implementation of **Tree Decomposition for Line Graphs**. In this model:
+- **Line Graph**: The routing graph is treated as a "line graph" where road segments (edges) are the primary nodes of interest.
+- **Hexagonal Separators**: H3 hexagons at various resolutions act as "bags" in the tree decomposition. 
+- **Balanced Partitioning**: The hierarchical grid ensures a balanced decomposition, keeping the treewidth manageable and enabling sub-millisecond query times even on very large networks.
+
 ## 2. Bidirectional Hierarchy Algorithm
 
 For both standard searches and hierarchy queries, we use a **Bidirectional Hierarchy Algorithm** implementation.
