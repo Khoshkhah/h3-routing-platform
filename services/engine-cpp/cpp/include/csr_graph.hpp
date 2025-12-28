@@ -54,7 +54,7 @@ struct CSREdgeMeta {
     uint64_t from_cell = 0;
     int64_t lca_res = -1;
     double length = 0.0;
-    double cost = 0.0;
+    float cost = 0.0f;
     std::vector<std::pair<double, double>> geometry;
 };
 
@@ -62,14 +62,20 @@ struct CSREdgeMeta {
  * @brief Shortcut edge stored in CSR arrays.
  */
 struct CSRShortcut {
+    uint64_t cell;
+    float cost;
     uint32_t from;
     uint32_t to;
-    uint32_t via_edge;
-    double cost;
-    uint64_t cell;
-    int8_t inside;
-    int8_t cell_res;
+    uint32_t via_edge : 30;
+    int32_t inside : 2;
+    
+    // Helper to get resolution from cell on the fly
+    int8_t get_res() const {
+        return (cell == 0) ? -1 : static_cast<int8_t>((cell >> 52) & 0xF);
+    }
 };
+// Ensure size is exactly 24 bytes
+static_assert(sizeof(CSRShortcut) == 24, "CSRShortcut must be 24 bytes");
 
 /**
  * @brief Spatial index type.
@@ -190,9 +196,6 @@ private:
     std::unordered_map<uint64_t, std::vector<uint32_t>> h3_index_;
     int h3_index_res_ = 9;
     std::unique_ptr<bgi::rtree<CSRRTreeValue, bgi::quadratic<16>>> rtree_;
-    
-    // Shortcut lookup for path expansion
-    std::unordered_map<uint64_t, size_t> shortcut_lookup_;
     
     // Thread safety for concurrent queries (mutable for const methods)
     mutable std::mutex query_mutex_;

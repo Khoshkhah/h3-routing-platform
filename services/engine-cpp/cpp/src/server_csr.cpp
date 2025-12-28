@@ -14,6 +14,8 @@
 #include <memory>
 #include <chrono>
 #include <mutex>
+#include <malloc.h>
+#include <arrow/memory_pool.h>
 
 using json = nlohmann::json;
 
@@ -25,7 +27,7 @@ struct Dataset {
 };
 
 // Global datasets map (thread-safe)
-std::unordered_map<std::string, std::unique_ptr<Dataset>> g_datasets;
+std::unordered_map<std::string, std::shared_ptr<Dataset>> g_datasets;
 std::mutex g_datasets_mutex;
 
 // Server configuration
@@ -38,10 +40,10 @@ struct ServerConfig {
 ServerConfig g_config;
 
 // Helper: Get dataset by name
-Dataset* get_dataset(const std::string& name) {
+std::shared_ptr<Dataset> get_dataset(const std::string& name) {
     std::lock_guard<std::mutex> lock(g_datasets_mutex);
     auto it = g_datasets.find(name);
-    return (it != g_datasets.end() && it->second->loaded) ? it->second.get() : nullptr;
+    return (it != g_datasets.end() && it->second->loaded) ? it->second : nullptr;
 }
 
 // Helper: Build GeoJSON from path
@@ -193,7 +195,7 @@ json trim_geojson_coords(const json& original_coords, double start_lat, double s
 bool load_dataset(const std::string& name, const std::string& shortcuts_path, const std::string& edges_path) {
     std::cout << "Loading dataset '" << name << "'...\n";
     
-    auto ds = std::make_unique<Dataset>();
+    auto ds = std::make_shared<Dataset>();
     ds->name = name;
     
     std::cout << "  Shortcuts: " << shortcuts_path << "\n";
@@ -223,6 +225,10 @@ bool load_dataset(const std::string& name, const std::string& shortcuts_path, co
     }
     
     std::cout << "  Dataset '" << name << "' loaded successfully\n";
+    
+    // Reclaim memory from the system after loading
+    malloc_trim(0);
+    
     return true;
 }
 
@@ -232,7 +238,7 @@ bool load_dataset_duckdb(const std::string& name, const std::string& db_path) {
     std::cout << "Loading dataset '" << name << "' from DuckDB...\n";
     std::cout << "  Database: " << db_path << "\n";
     
-    auto ds = std::make_unique<Dataset>();
+    auto ds = std::make_shared<Dataset>();
     ds->name = name;
     
     if (!ds->graph.load_from_duckdb(db_path)) {
@@ -255,20 +261,33 @@ bool load_dataset_duckdb(const std::string& name, const std::string& db_path) {
     }
     
     std::cout << "  Dataset '" << name << "' loaded successfully from DuckDB\n";
+    
+    // Reclaim memory from the system after loading
+    malloc_trim(0);
+    
     return true;
 }
 #endif
 
 // Unload dataset by name
 bool unload_dataset(const std::string& name) {
-    std::lock_guard<std::mutex> lock(g_datasets_mutex);
-    auto it = g_datasets.find(name);
-    if (it != g_datasets.end()) {
+    {
+        std::lock_guard<std::mutex> lock(g_datasets_mutex);
+        auto it = g_datasets.find(name);
+        if (it == g_datasets.end()) return false;
         g_datasets.erase(it);
-        std::cout << "Dataset '" << name << "' unloaded\n";
-        return true;
     }
-    return false;
+    
+    std::cout << "Dataset '" << name << "' unloaded from memory map\n";
+    
+    // Explicitly request Arrow to release cached memory
+    arrow::default_memory_pool()->ReleaseUnused();
+    
+    // Force glibc to release free memory back to the OS
+    malloc_trim(0);
+    
+    std::cout << "System memory release triggered\n";
+    return true;
 }
 
 // Get list of loaded datasets
@@ -477,7 +496,7 @@ int main(int argc, char* argv[]) {
                 k = body.value("k", 5);
             }
             
-            Dataset* ds = get_dataset(dataset_name);
+            std::shared_ptr<Dataset> ds = get_dataset(dataset_name);
             if (!ds) {
                 return crow::response(404, R"({"error": "Dataset not found"})");
             }
@@ -569,7 +588,7 @@ int main(int argc, char* argv[]) {
                 expand_path = body.value("expand", true);
             }
             
-            Dataset* ds = get_dataset(dataset_name);
+            std::shared_ptr<Dataset> ds = get_dataset(dataset_name);
             if (!ds) {
                 json response = {{"success", false}, {"error", "Dataset '" + dataset_name + "' not loaded"}};
                 return crow::response(503, response.dump());
@@ -727,7 +746,7 @@ int main(int argc, char* argv[]) {
             uint32_t target = body["target_edge"];
             std::string algorithm = body.value("algorithm", "pruned");
             
-            Dataset* ds = get_dataset(dataset_name);
+            std::shared_ptr<Dataset> ds = get_dataset(dataset_name);
             if (!ds) {
                 json response = {{"success", false}, {"error", "Dataset '" + dataset_name + "' not loaded"}};
                 return crow::response(503, response.dump());

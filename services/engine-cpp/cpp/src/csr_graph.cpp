@@ -54,7 +54,7 @@ using MinHeapWithRes = std::priority_queue<PQEntryWithRes, std::vector<PQEntryWi
 struct TempShortcut {
     uint32_t from;
     uint32_t to;
-    double cost;
+    float cost;
     uint32_t via_edge;
     uint64_t cell;
     int8_t inside;
@@ -138,7 +138,7 @@ bool CSRGraph::load_shortcuts(const std::string& path) {
     }
     fwd_offsets_[max_edge_id_ + 1] = offset;
     
-    // Copy shortcuts and build lookup
+    // Copy shortcuts
     shortcuts_.reserve(temp_list.size());
     for (const auto& t : temp_list) {
         CSRShortcut sc;
@@ -148,14 +148,7 @@ bool CSRGraph::load_shortcuts(const std::string& path) {
         sc.via_edge = t.via_edge;
         sc.cell = t.cell;
         sc.inside = t.inside;
-        sc.cell_res = t.cell_res;
         shortcuts_.push_back(sc);
-        
-        // Build lookup for path expansion
-        uint64_t key = (static_cast<uint64_t>(t.from) << 32) | t.to;
-        if (shortcut_lookup_.find(key) == shortcut_lookup_.end()) {
-            shortcut_lookup_[key] = shortcuts_.size() - 1;
-        }
     }
     
     // Build backward CSR
@@ -242,6 +235,7 @@ bool CSRGraph::load_edge_metadata(const std::string& path) {
                         meta.geometry.push_back({lon, lat});
                     }
                 }
+                meta.geometry.shrink_to_fit();
             }
         }
         
@@ -273,7 +267,6 @@ bool CSRGraph::load_from_duckdb(const std::string& db_path) {
         bwd_offsets_.clear();
         bwd_indices_.clear();
         edge_meta_.clear();
-        shortcut_lookup_.clear();
         max_edge_id_ = 0;
         
         // Load shortcuts
@@ -324,13 +317,8 @@ bool CSRGraph::load_from_duckdb(const std::string& db_path) {
             CSRShortcut sc;
             sc.from = t.from; sc.to = t.to; sc.cost = t.cost;
             sc.via_edge = t.via_edge; sc.cell = t.cell;
-            sc.inside = t.inside; sc.cell_res = t.cell_res;
+            sc.inside = t.inside;
             shortcuts_.push_back(sc);
-            
-            uint64_t key = (static_cast<uint64_t>(t.from) << 32) | t.to;
-            if (shortcut_lookup_.find(key) == shortcut_lookup_.end()) {
-                shortcut_lookup_[key] = shortcuts_.size() - 1;
-            }
         }
         
         // Build backward CSR
@@ -386,6 +374,7 @@ bool CSRGraph::load_from_duckdb(const std::string& db_path) {
                             meta.geometry.push_back({lon, lat});
                         }
                     }
+                    meta.geometry.shrink_to_fit();
                 }
                 edge_meta_[id] = std::move(meta);
             }
@@ -441,19 +430,38 @@ CSRHighCell CSRGraph::compute_high_cell(uint32_t source_edge, uint32_t target_ed
 }
 
 int CSRGraph::find_shortcut_index(uint32_t u, uint32_t v) const {
-    uint64_t key = (static_cast<uint64_t>(u) << 32) | v;
-    auto it = shortcut_lookup_.find(key);
-    return (it != shortcut_lookup_.end()) ? static_cast<int>(it->second) : -1;
+    auto range = get_fwd_range(u);
+    for (uint32_t i = range.first; i < range.second; ++i) {
+        if (shortcuts_[i].to == v) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
 }
 
 size_t CSRGraph::memory_usage() const {
     size_t total = 0;
     total += shortcuts_.capacity() * sizeof(CSRShortcut);
     total += fwd_offsets_.capacity() * sizeof(uint32_t);
-    total += bwd_offsets_.capacity() * sizeof(uint32_t);
+    total += bwd_offsets_.size() * sizeof(uint32_t);
     total += bwd_indices_.capacity() * sizeof(uint32_t);
-    // Approximate map overhead
-    total += edge_meta_.size() * (sizeof(uint32_t) + sizeof(CSREdgeMeta) + 64);
+    
+    // Maps and their content
+    total += edge_meta_.size() * (sizeof(uint32_t) + sizeof(CSREdgeMeta) + 32);
+    for (const auto& [id, meta] : edge_meta_) {
+        total += meta.geometry.capacity() * sizeof(std::pair<double, double>);
+    }
+    
+    if (spatial_index_type_ == CSRSpatialIndexType::H3) {
+        total += h3_index_.size() * (sizeof(uint64_t) + sizeof(std::vector<uint32_t>) + 32);
+        for (const auto& [cell, list] : h3_index_) {
+            total += list.capacity() * sizeof(uint32_t);
+        }
+    } else if (rtree_) {
+        // Approximate R-tree overhead
+        total += rtree_->size() * sizeof(CSRRTreeValue) * 1.2;
+    }
+    
     return total;
 }
 
@@ -877,7 +885,7 @@ CSRQueryResult CSRGraph::query_pruned(uint32_t source_edge, uint32_t target_edge
                 if (v_it == dist_fwd.end() || nd < v_it->second) {
                     dist_fwd[sc.to] = nd;
                     parent_fwd[sc.to] = u;
-                    pq_fwd.push({nd, sc.to, sc.cell_res});
+                    pq_fwd.push({nd, sc.to, sc.get_res()});
                 }
             }
         }
@@ -923,7 +931,7 @@ CSRQueryResult CSRGraph::query_pruned(uint32_t source_edge, uint32_t target_edge
                 if (prev_it == dist_bwd.end() || nd < prev_it->second) {
                     dist_bwd[sc.from] = nd;
                     parent_bwd[sc.from] = u;
-                    pq_bwd.push({nd, sc.from, sc.cell_res});
+                    pq_bwd.push({nd, sc.from, sc.get_res()});
                 }
             }
         }

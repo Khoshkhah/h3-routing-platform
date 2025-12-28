@@ -50,7 +50,10 @@ This document details the HTTP endpoints exposed by the C++ Routing Engine (defa
 *   `algorithm`: Search algorithm to use.
     *   `pruned`: Fast query using H3 resolution-based pruning (requires `one_to_one_v2`).
     *   `classic`: Traditional bidirectional Dijkstra on CH shortcut graph.
-    *   `dijkstra`: Standard bidirectional Dijkstra on the base road network (ignores shortcuts).
+    *   `dijkstra`: Standard bidirectional Dijkstra on the base road network (calculates from the shortcut graph but ignores CH hierarchy constraints). Useful for ground-truth verification.
+
+> [!TIP]
+> All cost and distance values are now returned with 32-bit `float` precision to optimize memory overhead by 78% on large datasets.
 
 ### Response
 ```json

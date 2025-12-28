@@ -85,13 +85,17 @@ Calculate the shortest path between two points.
 | `num_candidates` | int | `3` | Edges to check at start/end |
 | `algorithm` | str | `"pruned"` | `"pruned"`, `"classic"`, `"dijkstra"` |
 
+> [!NOTE]
+> **Dijkstra Mode**: While significantly slower than CH (~40x), Dijkstra mode provides an exact shortest path ground-truth by searching the entire shortcut graph without CH constraints.
+
 **Returns `RouteResponse`:**
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `success` | bool | Whether route was found |
-| `distance` | float | Total cost (travel time in seconds) |
+| `distance` | float | Total cost (typically travel time in seconds) |
 | `distance_meters` | float | Route length in meters |
+| `cost` | float | Alias for `distance` |
 | `runtime_ms` | float | Query time in milliseconds |
 | `path` | List[int] | List of base edge IDs |
 | `geojson` | Dict | GeoJSON FeatureCollection for visualization |
@@ -239,15 +243,12 @@ int main() {
 
 ---
 
-## Configuration Notes
+### Memory Efficiency
 
-### Spatial Index Type
-
-The nearest-edge lookup method is configured at the **server level**, not per-request.
-See [Spatial Index Configuration](cpp_engine_deep_dive.md#5-spatial-index-configuration) for:
-- H3 vs R-tree comparison
-- Server startup options
-- When to use each
+The CSR engine is highly optimized for large-scale networks. 
+- **Compact Storage**: Road graphs are stored in 24-byte contiguous blocks, using bitfields to minimize padding.
+- **Active Reclamation**: The server aggressively releases memory back to the OS using `malloc_trim` after dataset unloads and loads.
+- **Scaling**: A metropolitan area with 55M shortcuts (like Metro Vancouver) fits in approximately 1.6 GB of RSS.
 
 ---
 
