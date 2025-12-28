@@ -1,0 +1,6 @@
+[submodule "services/engine-cpp/cpp/third_party/crow"]
+	path = services/engine-cpp/cpp/third_party/crow
+	url = https://github.com/CrowCPP/Crow.git
+[submodule "services/engine-cpp/cpp/third_party/json"]
+	path = services/engine-cpp/cpp/third_party/json
+	url = https://github.com/nlohmann/json.git
