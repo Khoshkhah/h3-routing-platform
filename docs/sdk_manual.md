@@ -6,13 +6,13 @@ nav_order: 6
 
 # SDK Manual
 
-This document provides a high-fidelity reference for the H3 Routing Platform client libraries.
+This document provides a high-fidelity reference for the H3 Routing Platform Python SDK.
 
 ## Python SDK
 
 The Python SDK is the primary interface for interacting with the routing engine, supporting all features including dynamic dataset management and advanced routing modes.
 
-### installation
+### Installation
 
 ```bash
 pip install -e sdk/python
@@ -116,6 +116,26 @@ client.load_dataset("burnaby", db_path="/path/to/burnaby.db")
 
 ---
 
+### unload_dataset
+
+Unload a dataset and free the associated memory in the engine.
+
+#### Arguments
+
+| Name | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `name` | `str` | *required* | Unique identifier of the dataset to unload. |
+
+#### Return Value
+Returns `True` if successfully unloaded, `False` otherwise.
+
+#### Usage
+```python
+client.unload_dataset("burnaby")
+```
+
+---
+
 ### nearest_edges
 
 Retrieve road segments closest to a specific coordinate.
@@ -172,40 +192,3 @@ The object returned by routing methods contains several convenience properties.
 - **`distance_meters`**: Returns the physical length of the path in meters.
 - **`path`**: Provides the ordered sequence of base road edge IDs.
 - **`geojson`**: A standard GeoJSON LineString dictionary ready for visualization.
-
----
-
-## C++ SDK
-
-A header-only lightweight client designed for embedding into performance-critical services.
-
-### routing::Client
-
-Constructor for the C++ client.
-
-#### Arguments
-
-| Name | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `url` | `std::string` | `"http://localhost:8082"` | Base URL of the engine. |
-
----
-
-### route
-
-Executes a routing request.
-
-#### Arguments
-
-| Name | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `req` | `routing::RouteRequest` | *required*| Structure containing `dataset`, `start_lat`, `start_lng`, `end_lat`, `end_lng`, and `mode`. |
-
-#### Return Value
-Returns a `nlohmann::json` object containing the query results or an `error` key.
-
-#### Usage
-```cpp
-routing::RouteRequest req = {"burnaby", 49.2, -123.1, 49.25, -123.15};
-auto res = client.route(req);
-```
