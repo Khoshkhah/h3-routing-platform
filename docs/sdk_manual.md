@@ -1,3 +1,9 @@
+---
+layout: default
+title: SDK Manual
+nav_order: 6
+---
+
 # SDK Manual
 
 This guide documents the client libraries available for interacting with the **H3 Routing Platform**.

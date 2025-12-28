@@ -1,3 +1,9 @@
+---
+layout: default
+title: Architecture Overview
+nav_order: 2
+---
+
 # Architecture Overview
 
 This project is a high-performance **Contraction Hierarchy (CH)** routing engine designed for efficient pathfinding on large road networks. It consists of three main layers: Data Generation, Routing Engine (C++), and Application Layer (Python/UI).

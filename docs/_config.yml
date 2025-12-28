@@ -1,0 +1,21 @@
+title: H3 Routing Platform
+description: High-performance Contraction Hierarchy routing engine optimized with H3 spatial pruning.
+remote_theme: just-the-docs/just-the-docs
+
+# Enable Mermaid diagrams
+mermaid:
+  version: "9.1.3"
+
+# Navigation settings
+nav_external_links:
+  - title: GitHub Repo
+    url: https://github.com/your-username/h3-routing-platform
+
+# Footer content
+footer_content: "© 2025 Google DeepMind Advanced Agentic Coding Project"
+
+# Documentation settings
+search_enabled: true
+aux_links:
+  "GitHub Repository":
+    - https://github.com/your-username/h3-routing-platform

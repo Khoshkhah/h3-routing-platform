@@ -1,3 +1,9 @@
+---
+layout: default
+title: API Reference
+nav_order: 5
+---
+
 # Routing Engine API Reference
 
 This document details the HTTP endpoints exposed by the C++ Routing Engine (default port: `8082`).
