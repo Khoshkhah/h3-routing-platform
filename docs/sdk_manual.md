@@ -10,7 +10,7 @@ This document provides a high-fidelity reference for the H3 Routing Platform Pyt
 
 ## Python SDK
 
-The Python SDK is the primary interface for interacting with the routing engine, supporting all features including dynamic dataset management and advanced routing modes.
+The Python SDK is the primary interface for interacting with the routing engine. It supports dynamic dataset management, advanced routing modes, and spatial queries.
 
 ### Installation
 
@@ -20,20 +20,14 @@ pip install -e sdk/python
 
 ---
 
-### RoutingClient
+### Import & Initialization
 
-Constructor for the routing client.
+The package is named `h3_routing_client`.
 
-#### Arguments
-
-| Name | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `base_url` | `str` | `"http://localhost:8082"` | URL of the Routing Engine or API Gateway. |
-| `config_path` | `str` | `None` | Optional path to `datasets.yaml` for local resolution. |
-
-#### Usage
 ```python
 from h3_routing_client import RoutingClient
+
+# Initialize with the address of your C++ Engine or API Gateway
 client = RoutingClient(base_url="http://localhost:8082")
 ```
 
@@ -43,65 +37,29 @@ client = RoutingClient(base_url="http://localhost:8082")
 
 Check the current status of the server and list loaded datasets.
 
-#### Arguments
-None.
-
 #### Return Value
 Returns a `dict` containing:
-- `status`: String (e.g., "healthy").
+- `status`: String (e.g., `"healthy"`)
 - `datasets_loaded`: List of strings showing active datasets.
 
-#### Usage
+#### Usage Example
 ```python
 status = client.health()
-print(status['datasets_loaded'])
-```
-
----
-
-### route
-
-Calculate the shortest path between two geographic points.
-
-#### Arguments
-
-| Name | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `dataset` | `str` | *required* | Target dataset name. |
-| `start_lat`, `start_lng` | `float` | *required* | Origin coordinates. |
-| `end_lat`, `end_lng` | `float` | *required* | Destination coordinates. |
-| `mode` | `str` | `"knn"` | Nearest edge search mode (`knn`, `radius`, `one_to_one`). |
-| `num_candidates` | `int` | `3` | Number of candidate edges for `knn` mode. |
-| `algorithm` | `str` | `"pruned"` | Routing logic (`pruned`, `classic`, `dijkstra`). |
-
-#### Return Value
-Returns a `RouteResponse` object:
-- `success`: `bool`
-- `cost`: `float` (Alias for `distance`)
-- `distance_meters`: `float` (Physical length)
-- `runtime_ms`: `float`
-- `path`: `List[int]` (Raw base edge IDs)
-- `geojson`: `dict` (GeoJSON LineString)
-- `error`: `str` (Optional error message)
-
-#### Usage
-```python
-response = client.route("vancouver", 49.2, -123.1, 49.3, -123.2)
-if response.success:
-    print(f"Cost: {response.cost}")
+print(f"Server Status: {status['status']}")
+print(f"Active Datasets: {status['datasets_loaded']}")
 ```
 
 ---
 
 ### load_dataset
 
-Dynamically load a dataset into the engine memory.
+Dynamically load a dataset into engine memory.
 
 #### Arguments
 
 | Name | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `name` | `str` | *required* | Dataset identifier. |
+| `name` | `str` | *required* | Dataset identifier (e.g., "vancouver"). |
 | `db_path` | `str` | `None` | Path to the DuckDB database (preferred). |
 | `shortcuts_path` | `str` | `None` | Path to parquet shortcuts (Legacy). |
 | `edges_path` | `str` | `None` | Path to edges metadata (Legacy). |
@@ -109,29 +67,76 @@ Dynamically load a dataset into the engine memory.
 #### Return Value
 Returns `True` if successfully loaded, `False` otherwise.
 
-#### Usage
+#### Usage Example
 ```python
-client.load_dataset("burnaby", db_path="/path/to/burnaby.db")
+# Preferred way (DuckDB)
+success = client.load_dataset(
+    name="burnaby", 
+    db_path="/data/burnaby.db"
+)
+
+# Legacy way (Separate files)
+success = client.load_dataset(
+    name="metro_van",
+    shortcuts_path="/data/shortcuts/",
+    edges_path="/data/edges.csv"
+)
 ```
 
 ---
 
 ### unload_dataset
 
-Unload a dataset and free the associated memory in the engine.
+Remove a dataset from memory to free system resources.
 
 #### Arguments
 
 | Name | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `name` | `str` | *required* | Unique identifier of the dataset to unload. |
+| `name` | `str` | *required* | Identifier of the dataset to unload. |
 
 #### Return Value
 Returns `True` if successfully unloaded, `False` otherwise.
 
-#### Usage
+#### Usage Example
 ```python
-client.unload_dataset("burnaby")
+if client.unload_dataset("burnaby"):
+    print("Memory freed successfully.")
+```
+
+---
+
+### route
+
+Calculate the shortest path between two points.
+
+#### Arguments
+
+| Name | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `dataset` | `str` | *required* | Target dataset. |
+| `start_lat`, `start_lng` | `float` | *required* | Source coordinates. |
+| `end_lat`, `end_lng` | `float` | *required* | Target coordinates. |
+| `mode` | `str` | `"knn"` | Lookup mode: `knn`, `radius`, `one_to_one`. |
+| `num_candidates` | `int` | `3` | Candidates for `knn` mode. |
+| `algorithm` | `str` | `"pruned"` | Core logic: `pruned`, `classic`, `dijkstra`. |
+
+#### Return Value
+Returns a `RouteResponse` object.
+
+#### Usage Example
+```python
+response = client.route(
+    dataset="vancouver",
+    start_lat=49.2, start_lng=-123.1,
+    end_lat=49.3, end_lng=-123.2,
+    algorithm="pruned"
+)
+
+if response.success:
+    print(f"Travel Cost: {response.cost}")
+    print(f"Length (meters): {response.distance_meters}")
+    print(f"Path Edges: {len(response.path)}")
 ```
 
 ---
@@ -146,49 +151,57 @@ Retrieve road segments closest to a specific coordinate.
 | :--- | :--- | :--- | :--- |
 | `dataset` | `str` | *required* | Target dataset. |
 | `lat`, `lon` | `float` | *required* | Query coordinates. |
-| `k` | `int` | `5` | Maximum number of edges to return. |
-| `radius_meters`| `float` | `100.0` | Maximum search radius. |
+| `k` | `int` | `5` | Max edges to return. |
+| `radius_meters` | `float` | `100.0` | Max search radius. |
 
 #### Return Value
-Returns a `List[Dict]` where each dict contains:
-- `edge_id`: `int`
-- `distance`: `float` (Meters from point)
-- `cost`: `float`
+Returns a `List[Dict]` containing `edge_id`, `distance`, and `cost`.
+
+#### Spatial Index Note
+By default, the server uses an **H3-based spatial index** for this query. This can be changed to an **R-tree** via the server command-line argument `--index rtree` or in the `server.json` configuration.
+
+#### Usage Example
+```python
+edges = client.nearest_edges("vancouver", 49.25, -123.12, k=3)
+for edge in edges:
+    print(f"Edge {edge['edge_id']} is {edge['distance']:.1f}m away.")
+```
 
 ---
 
-### route_by_edge (Debug)
+### Debug & Advanced Methods
 
-Computes a route directly between two static edge IDs, skipping spatial lookup.
+#### route_by_edge
 
-#### Arguments
+Direct routing between internal Edge IDs, skipping coordinate lookup.
 
-| Name | Type | Description |
-| :--- | :--- | :--- |
-| `dataset` | `str` | Target dataset. |
-| `source_edge` | `int` | Internal graph ID for source. |
-| `target_edge` | `int` | Internal graph ID for destination. |
+```python
+# Useful for testing the graph structure directly
+res = client.route_by_edge("vancouver", source_edge=501, target_edge=902)
+```
 
----
+#### route_by_edge_raw / route_raw
 
-### route_by_edge_raw (Debug)
+Returns the shortcut-level path (CH hierarchy) without expanding it into base road segments.
 
-Similar to `route_by_edge`, but returns the raw shortcut-level path without expansion into base road edges. Useful for visualizing the CH hierarchy.
-
----
-
-### route_raw (Debug)
-
-Computes a route using coordinates but returns the unexpanded shortcut path.
+```python
+# Useful for visualizing how the Contraction Hierarchies algorithm works
+res = client.route_raw("vancouver", 49.2, -123.1, 49.3, -123.2)
+print(f"Shortcut IDs: {res['route']['shortcut_path']}")
+```
 
 ---
 
-### Internal Classes & Properties
+### Classes & Properties
 
 #### RouteResponse
-The object returned by routing methods contains several convenience properties.
 
-- **`cost`**: Returns the total optimization weight of the path (alias for `distance`).
-- **`distance_meters`**: Returns the physical length of the path in meters.
-- **`path`**: Provides the ordered sequence of base road edge IDs.
-- **`geojson`**: A standard GeoJSON LineString dictionary ready for visualization.
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `success` | `bool` | `True` if a path was found. |
+| `cost` | `float` | Total optimization weight (alias for `distance`). |
+| `distance_meters`| `float` | Physical length in meters. |
+| `runtime_ms` | `float` | Time taken by the engine. |
+| `path` | `List[int]` | Ordered list of base road edge IDs. |
+| `geojson` | `dict` | GeoJSON LineString dictionary. |
+| `error` | `str` | Error message if `success` is `False`. |
