@@ -6,7 +6,7 @@ nav_order: 2
 
 # Architecture Overview
 
-This project is a high-performance **Contraction Hierarchy (CH)** routing engine designed for efficient pathfinding on large road networks. It consists of three main layers: Data Generation, Routing Engine (C++), and Application Layer (Python/UI).
+This project is a high-performance **H3 Spatial Hierarchy** routing engine designed for efficient pathfinding on large road networks. It consists of three main layers: Data Generation, Routing Engine (C++), and Application Layer (Python/UI).
 
 ```mermaid
 graph LR
@@ -53,7 +53,7 @@ graph LR
 Before the server starts, we process raw map data into a format optimized for routing.
 *   **osm-to-road**: Converts OpenStreetMap XML/PBF into a clean road graph (edges and nodes).
 *   **road-to-shortcut-duckdb**: The "Brain". Uses DuckDB (and previously Spark) to pre-calculate **shortcuts**.
-    *   Uses **Contraction Hierarchies** to add "shortcut edges" that skip over less important nodes.
+    *   Uses **H3 Spatial Hierarchy** to add "shortcut edges" that skip over geographic regions.
     *   Output: `shortcuts.parquet` (compressed graph) and `edges.csv` (metadata).
 
 ### 2. C++ Routing Backend
@@ -113,7 +113,7 @@ We can't route on coordinates directly. We need Graph Edge IDs.
 *   *(Repeated for target location)*
 
 ### 3. The Core Routing Algorithm (Bi-Hierarchy)
-Now we run the **Contraction Hierarchy query** on the *Shortcut Graph*.
+Now we run the **H3 Spatial Hierarchy query** on the *Shortcut Graph*.
 *   **Function**: `query_pruned(source=1593, target=4835)`
 *   **Process**:
     *   **Forward Search**: Explore outgoing shortcuts from source (only `inside=+1` upward edges).
