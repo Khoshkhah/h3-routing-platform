@@ -149,6 +149,12 @@ public:
     QueryResult query_pruned(uint32_t source_edge, uint32_t target_edge) const;
 
     /**
+     * @brief Unidirectional pruned Dijkstra with complex state machine.
+     * Matches the Python prototype logic for 'inside' flag transitions.
+     */
+    QueryResult query_unidirectional(uint32_t source_edge, uint32_t target_edge) const;
+
+    /**
      * @brief Multi-source/target bidirectional search.
      */
     QueryResult query_multi(

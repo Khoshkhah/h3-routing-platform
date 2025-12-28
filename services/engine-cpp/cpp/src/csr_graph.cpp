@@ -43,8 +43,15 @@ struct PQEntryWithRes {
     bool operator>(const PQEntryWithRes& o) const { return dist > o.dist; }
 };
 
+struct PQEntryWithState {
+    double dist;
+    uint64_t state;
+    bool operator>(const PQEntryWithState& o) const { return dist > o.dist; }
+};
+
 using MinHeap = std::priority_queue<PQEntry, std::vector<PQEntry>, std::greater<PQEntry>>;
 using MinHeapWithRes = std::priority_queue<PQEntryWithRes, std::vector<PQEntryWithRes>, std::greater<PQEntryWithRes>>;
+using MinHeapWithState = std::priority_queue<PQEntryWithState, std::vector<PQEntryWithState>, std::greater<PQEntryWithState>>;
 
 // ============================================================
 // LOADING - PARQUET
@@ -971,6 +978,138 @@ CSRQueryResult CSRGraph::query_pruned(uint32_t source_edge, uint32_t target_edge
     }
     
     return {best, path, true, ""};
+}
+
+
+// ============================================================
+// QUERY: UNIDIRECTIONAL PRUNED
+// ============================================================
+
+CSRQueryResult CSRGraph::query_unidirectional(uint32_t source_edge, uint32_t target_edge) const {
+    constexpr double INF = std::numeric_limits<double>::infinity();
+    
+    if (source_edge == target_edge) {
+        return {get_edge_cost(source_edge), {source_edge}, true, ""};
+    }
+    
+    // Validate edges
+    if (!is_valid_edge(source_edge)) return {-1, {}, false, "Source edge not found"};
+    if (!is_valid_edge(target_edge)) return {-1, {}, false, "Target edge not found"};
+    
+    CSRHighCell high = compute_high_cell(source_edge, target_edge);
+    
+    // Priority queue storing (dist, state)
+    MinHeapWithState pq;
+    
+    // Map: state -> dist
+    std::unordered_map<uint64_t, double> dist_map;
+    // Map: state -> parent_state (for path reconstruction)
+    std::unordered_map<uint64_t, uint64_t> parent_map;
+    
+    // Initial state: (source_edge, 0, false)
+    uint64_t start_state = (static_cast<uint64_t>(source_edge) << 4) | (0 << 1) | 0;
+    
+    dist_map[start_state] = 0.0;
+    parent_map[start_state] = start_state; // root points to self
+    pq.push({0.0, start_state});
+    
+    double best_dist = INF;
+    uint64_t best_end_state = 0;
+    bool found = false;
+    
+    while (!pq.empty()) {
+        auto [d, curr_packed] = pq.top(); pq.pop();
+        
+        // Unpack state
+        uint32_t u = static_cast<uint32_t>(curr_packed >> 4);
+        uint32_t counter = static_cast<uint32_t>((curr_packed >> 1) & 0x7);
+        bool used_minus1 = (curr_packed & 1) != 0;
+        
+        if (d > dist_map[curr_packed]) continue;
+        if (d >= best_dist) continue;
+        
+        // Target check
+        if (u == target_edge) {
+            if (d < best_dist) {
+                best_dist = d;
+                best_end_state = curr_packed;
+                found = true;
+            }
+            continue;
+        }
+        
+        // Pruning logic - get u's resolution
+        const auto* meta = get_edge_meta(u);
+        int u_res = meta ? static_cast<int>(meta->lca_res) : -1;
+        
+        // Explore neighbors
+        auto [start, end] = get_fwd_range(u);
+        for (uint32_t i = start; i < end; ++i) {
+            if (i >= shortcuts_.size()) break;
+            const auto& sc = shortcuts_[i];
+            
+            // --- Pruning Rules (match Python prototype EXACTLY) ---
+            bool can_use = false;
+            uint32_t next_counter = counter;
+            bool next_used_minus1 = used_minus1;
+            
+            if (u_res > high.res) {
+                // ABOVE PEAK: only inside=1 allowed (or -1 if already used_minus1)
+                if (sc.inside == 1 && !used_minus1) {
+                    can_use = true;
+                } else if (sc.inside == -1 && used_minus1) {
+                    can_use = true;
+                }
+            } else {
+                // AT OR BELOW PEAK: inside={0,-2} with counter limit, or inside=-1
+                if ((sc.inside == 0 || sc.inside == -2) && counter < 2) {
+                    can_use = true;
+                    next_counter++;
+                    next_used_minus1 = true;
+                } else if (sc.inside == -1) {
+                    can_use = true;
+                    next_used_minus1 = true;
+                }
+            }
+            
+            if (!can_use) continue;
+            
+            // Relaxation
+            double new_dist = d + sc.cost;
+            uint64_t next_state = (static_cast<uint64_t>(sc.to) << 4) | (next_counter << 1) | (next_used_minus1 ? 1 : 0);
+            
+            auto it = dist_map.find(next_state);
+            if (it == dist_map.end() || new_dist < it->second) {
+                dist_map[next_state] = new_dist;
+                parent_map[next_state] = curr_packed;
+                pq.push({new_dist, next_state});
+            }
+        }
+    }
+    
+    if (!found) {
+        return {-1, {}, false, "No path found"};
+    }
+    
+    // Reconstruct path
+    std::vector<uint32_t> path;
+    uint64_t curr = best_end_state;
+    
+    while (true) {
+        uint32_t u = static_cast<uint32_t>(curr >> 4);
+        path.push_back(u);
+        
+        auto it = parent_map.find(curr);
+        if (it == parent_map.end() || it->second == curr) break;
+        curr = it->second;
+    }
+    std::reverse(path.begin(), path.end());
+    
+    // Add target edge cost to total (consistent with other query methods)
+    double target_cost = get_edge_cost(target_edge);
+    double total_distance = best_dist + target_cost;
+    
+    return {total_distance, path, true, ""};
 }
 
 // ============================================================

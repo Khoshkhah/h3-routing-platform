@@ -616,6 +616,8 @@ int main(int argc, char* argv[]) {
                 uint32_t target = end_edges[0].first;
                 if (algorithm == "dijkstra") {
                     result = ds->graph.query_dijkstra(source, target);
+                } else if (algorithm == "unidirectional") {
+                    result = ds->graph.query_unidirectional(source, target);
                 } else if (mode == "one_to_one_v2" || algorithm == "pruned") {
                     result = ds->graph.query_pruned(source, target);
                 } else {
@@ -757,6 +759,8 @@ int main(int argc, char* argv[]) {
                 result = ds->graph.query_dijkstra(source, target);
             } else if (algorithm == "classic") {
                 result = ds->graph.query_classic(source, target);
+            } else if (algorithm == "unidirectional") {
+                result = ds->graph.query_unidirectional(source, target);
             } else {
                 result = ds->graph.query_pruned(source, target);
             }

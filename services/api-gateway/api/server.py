@@ -316,7 +316,8 @@ async def compute_route(
     dataset: str = Query(..., description="Dataset name"),
     search_mode: str = Query("knn", description="Search mode: 'knn', 'one_to_one', or 'one_to_one_v2'"),
     num_candidates: int = Query(3, description="Number of candidates for KNN", ge=1, le=10),
-    search_radius: float = Query(2000.0, description="Search radius in meters", ge=10.0, le=10000.0)
+    search_radius: float = Query(2000.0, description="Search radius in meters", ge=10.0, le=10000.0),
+    algorithm: str = Query("pruned", description="Routing algorithm: 'pruned', 'classic', 'unidirectional', 'dijkstra'")
 ):
     """
     Compute a route between Source and Target.
@@ -365,7 +366,8 @@ async def compute_route(
             end_lng=tgt_lon,
             search_mode=search_mode,
             num_candidates=num_candidates,
-            search_radius=search_radius
+            search_radius=search_radius,
+            algorithm=algorithm
         )
         
         if not result.success:

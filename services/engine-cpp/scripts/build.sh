@@ -33,10 +33,10 @@ fi
 
 # Use ninja if available, otherwise use make
 if command -v ninja &> /dev/null; then
-    cmake -G Ninja ..
+    cmake -G Ninja -DCMAKE_PREFIX_PATH="$HOME/miniconda3/envs/h3-routing" ..
     ninja
 else
-    cmake -G "Unix Makefiles" ..
+    cmake -G "Unix Makefiles" -DCMAKE_PREFIX_PATH="$HOME/miniconda3/envs/h3-routing" ..
     make -j$(nproc)
 fi
 

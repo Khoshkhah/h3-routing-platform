@@ -145,7 +145,7 @@ class RoutingClient:
             end_lat, end_lng: Target coordinates
             mode: Search mode ("knn", "one_to_one", or "one_to_one_v2")
             num_candidates: Number of nearest edges to consider per point
-            algorithm: Routing algorithm ("pruned", "classic", or "dijkstra")
+            algorithm: Routing algorithm ("pruned", "classic", "unidirectional", or "dijkstra")
 
         Returns:
             RouteResponse object containing:
@@ -212,6 +212,25 @@ class RoutingClient:
                 )
             except Exception as e:
                 return RouteResponse(success=False, error=str(e))
+
+    def route_unidirectional(
+        self,
+        dataset: str,
+        start_lat: float, start_lng: float,
+        end_lat: float, end_lng: float,
+        num_candidates: int = 3
+    ) -> RouteResponse:
+        """
+        Convenience method for unidirectional pruned routing.
+        Uses the 'unidirectional' algorithm type.
+        """
+        return self.route(
+            dataset=dataset,
+            start_lat=start_lat, start_lng=start_lng,
+            end_lat=end_lat, end_lng=end_lng,
+            num_candidates=num_candidates,
+            algorithm="unidirectional"
+        )
 
     def load_dataset(
         self, 

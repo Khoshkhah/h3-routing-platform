@@ -651,6 +651,8 @@ int main(int argc, char* argv[]) {
                 // one_to_one = classic, one_to_one_v2 = pruned
                 if (mode == "one_to_one_v2" || algorithm == "pruned") {
                     result = ds->graph.query_pruned(source, target);
+                } else if (algorithm == "unidirectional") {
+                    result = ds->graph.query_unidirectional(source, target);
                 } else {
                     result = ds->graph.query_classic(source, target);
                 }
@@ -793,9 +795,14 @@ int main(int argc, char* argv[]) {
                 return crow::response(503, response.dump());
             }
             
-            QueryResult result = (algorithm == "classic") ?
-                ds->graph.query_classic(source, target) :
-                ds->graph.query_pruned(source, target);
+            QueryResult result;
+            if (algorithm == "classic") {
+                result = ds->graph.query_classic(source, target);
+            } else if (algorithm == "unidirectional") {
+                result = ds->graph.query_unidirectional(source, target);
+            } else {
+                result = ds->graph.query_pruned(source, target);
+            }
             
             auto end_time = std::chrono::high_resolution_clock::now();
             double runtime_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();

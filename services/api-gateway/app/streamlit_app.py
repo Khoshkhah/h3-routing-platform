@@ -248,6 +248,7 @@ html_code = f"""
                     <option value="knn">KNN (K-Nearest)</option>
                     <option value="one_to_one">One-to-One (Classic)</option>
                     <option value="one_to_one_v2">One-to-One (v2)</option>
+                    <option value="unidirectional">Unidirectional (Pruned)</option>
                     <option value="dijkstra">Dijkstra (No CH)</option>
                 </select>
             </div>
@@ -370,7 +371,21 @@ html_code = f"""
             
             // Get selected parameters
             const dataset = document.getElementById('dataset-selector').value;
-            const searchMode = document.getElementById('search-mode').value;
+            const searchModeRaw = document.getElementById('search-mode').value;
+            
+            let searchModeNorm = searchModeRaw;
+            let algorithm = 'pruned';
+            
+            if (searchModeRaw === 'unidirectional') {{
+                 searchModeNorm = 'one_to_one';
+                 algorithm = 'unidirectional';
+            }} else if (searchModeRaw === 'dijkstra') {{
+                 searchModeNorm = 'dijkstra';
+                 algorithm = 'dijkstra';
+            }} else if (searchModeRaw === 'one_to_one') {{
+                 algorithm = 'classic';
+            }}
+            
             const searchRadius = 2000; // Hardcoded default
             const numCandidates = document.getElementById('num-candidates').value;
 
@@ -383,7 +398,8 @@ html_code = f"""
                 target_lon: lonB,
                 search_radius: searchRadius,
                 num_candidates: numCandidates,
-                search_mode: searchMode
+                search_mode: searchModeNorm,
+                algorithm: algorithm
             }});
 
             try {{
@@ -745,7 +761,7 @@ html_code = f"""
             const mode = this.value;
             const knnContainer = document.getElementById('knn-container');
             
-            if (mode === 'one_to_one' || mode === 'one_to_one_v2' || mode === 'dijkstra') {{
+            if (mode === 'one_to_one' || mode === 'one_to_one_v2' || mode === 'dijkstra' || mode === 'unidirectional') {{
                 knnContainer.style.display = 'none';
             }} else {{
                 knnContainer.style.display = 'block';

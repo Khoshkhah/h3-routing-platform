@@ -73,17 +73,18 @@ class CHQueryEngine:
         end_lng: float,
         search_mode: str = "knn",
         num_candidates: int = 3,
-        search_radius: float = 100.0
+        search_radius: float = 100.0,
+        algorithm: str = "pruned"
     ) -> QueryResult:
         """
         Compute route using the routing server's full stack (NN + CH).
         """
         # Mapping for Dijkstra
-        algorithm = "pruned"
         if search_mode == "one_to_one":
             num_candidates = 1
         elif search_mode == "one_to_one_v2":
             num_candidates = 1
+            if algorithm == "pruned": algorithm = "pruned" # keep default
         elif search_mode == "dijkstra":
             search_mode = "one_to_one"
             num_candidates = 1
