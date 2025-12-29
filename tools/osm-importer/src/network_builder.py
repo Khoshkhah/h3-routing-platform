@@ -9,9 +9,10 @@ from .restriction_handler import TurnRestrictionProcessor
 from .h3_processor import H3Processor
 
 class NetworkBuilder:
-    def __init__(self, pbf_file, output_name, h3_cell=0):
+    def __init__(self, pbf_file, output_name, import_type="district", h3_cell="0"):
         self.pbf_file = pbf_file
         self.output_name = output_name
+        self.import_type = import_type
         self.h3_cell = h3_cell
         self.graph = None
         self.edges_df = None
@@ -31,7 +32,7 @@ class NetworkBuilder:
         )
 
         # Filter by H3 Cell if specified
-        if self.h3_cell != 0:
+        if self.import_type == "h3_cell" and self.h3_cell != "0":
             print(f"Filtering graph by H3 cell: {self.h3_cell}")
             res = h3.get_resolution(self.h3_cell)
             

@@ -1,3 +1,4 @@
 name: "All_Vancouver"
+type: "district"
 pbf_path: "data/maps/Vancouver.osm.pbf"
 output_dir: "data/output/All_Vancouver"

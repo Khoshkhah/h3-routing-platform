@@ -1,0 +1,5 @@
+name: "cell_862b02d27ffffff"
+type: "h3_cell"
+pbf_path: "data/maps/cell-862b02d27ffffff.osm.pbf"
+output_dir: "data/output"
+h3_cell: "862b02d27ffffff"
