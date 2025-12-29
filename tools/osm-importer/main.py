@@ -25,6 +25,7 @@ def main(config_path, output_dir_override=None):
     name = config.get('name', 'output')
     pbf_file = config.get('pbf_path')
     output_dir = output_dir_override or config.get('output_dir', 'data/output')
+    h3_cell = config.get('h3_cell', '0')
     
     if not pbf_file:
         logger.error("pbf_path must be specified in config")
@@ -34,9 +35,10 @@ def main(config_path, output_dir_override=None):
     logger.info(f"Config: {config_path}")
     logger.info(f"Name: {name}")
     logger.info(f"PBF Path: {pbf_file}")
+    logger.info(f"H3 Cell Filter: {h3_cell}")
     
     # Build network
-    builder = NetworkBuilder(pbf_file, name)
+    builder = NetworkBuilder(pbf_file, name, h3_cell)
     
     logger.info("Building graph...")
     builder.build_graph()

@@ -1,6 +1,7 @@
 import pandas as pd
 import networkx as nx
 import osmnx as ox
+import h3
 from pyrosm import OSM
 from tqdm import tqdm
 from .speed_processor import SpeedProcessor
@@ -8,9 +9,10 @@ from .restriction_handler import TurnRestrictionProcessor
 from .h3_processor import H3Processor
 
 class NetworkBuilder:
-    def __init__(self, pbf_file, output_name):
+    def __init__(self, pbf_file, output_name, h3_cell=0):
         self.pbf_file = pbf_file
         self.output_name = output_name
+        self.h3_cell = h3_cell
         self.graph = None
         self.edges_df = None
         self.nodes_df = None
@@ -27,13 +29,53 @@ class NetworkBuilder:
             network_type=network_type,
             nodes=True
         )
-        
+
+        # Filter by H3 Cell if specified
+        if self.h3_cell != 0:
+            print(f"Filtering graph by H3 cell: {self.h3_cell}")
+            res = h3.get_resolution(self.h3_cell)
+            
+            # Identify nodes inside the cell
+            # Vectorized approach for speed
+            def is_in_cell(point):
+                if point is None: return False
+                try:
+                    # Check ancestor (resolution might differ?) 
+                    # Actually, we want to know if 'h3_cell' is an ancestor of the node.
+                    # We can find the specific parent at 'res' for the node's location.
+                    node_h3 = h3.geo_to_h3(point.y, point.x, res)
+                    return node_h3 == self.h3_cell
+                except:
+                    return False
+            
+            # We need to filter based on geometry. pyrosm nodes_gdf has 'geometry' column (Point)
+            # Apply filter to find inside nodes
+            tqdm.pandas(desc="Filtering nodes by H3")
+            nodes_gdf["inside"] = nodes_gdf["geometry"].progress_apply(is_in_cell)
+            inside_nodes = set(nodes_gdf[nodes_gdf["inside"]].index)
+            
+            # Filter edges: Keep if u OR v is inside
+            # pyrosm edges_gdf uses 'u' and 'v' columns for node IDs
+            if 'u' in edges_gdf.columns and 'v' in edges_gdf.columns:
+                edges_gdf = edges_gdf[
+                    edges_gdf['u'].isin(inside_nodes) | 
+                    edges_gdf['v'].isin(inside_nodes)
+                ]
+            
+            print(f"Filtered to {len(edges_gdf)} edges overlapping cell {self.h3_cell}")
+
         self.graph = osm_district.to_graph(
             nodes_gdf,
             edges_gdf,
             graph_type="networkx",
             osmnx_compatible=True
         )
+
+        # Remove isolated nodes
+        isolates = list(nx.isolates(self.graph))
+        if isolates:
+            print(f"Removing {len(isolates)} isolated nodes")
+            self.graph.remove_nodes_from(isolates)
         
         return self.graph
     
