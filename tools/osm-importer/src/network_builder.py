@@ -40,12 +40,10 @@ class NetworkBuilder:
             def is_in_cell(point):
                 if point is None: return False
                 try:
-                    # Check ancestor (resolution might differ?) 
-                    # Actually, we want to know if 'h3_cell' is an ancestor of the node.
-                    # We can find the specific parent at 'res' for the node's location.
-                    node_h3 = h3.geo_to_h3(point.y, point.x, res)
+                    # h3-py v4: latlng_to_cell(lat, lng, res)
+                    node_h3 = h3.latlng_to_cell(point.y, point.x, res)
                     return node_h3 == self.h3_cell
-                except:
+                except Exception as e:
                     return False
             
             # We need to filter based on geometry. pyrosm nodes_gdf has 'geometry' column (Point)
@@ -55,7 +53,9 @@ class NetworkBuilder:
             inside_nodes = set(nodes_gdf[nodes_gdf["inside"]].index)
             
             # Filter edges: Keep if u OR v is inside
-            # pyrosm edges_gdf uses 'u' and 'v' columns for node IDs
+            # NOTE: We do NOT filter nodes_gdf to ensure boundary nodes (which are outside
+            # but connected to an inside node) remain available for the graph.
+            # Only edges completely outside are removed.
             if 'u' in edges_gdf.columns and 'v' in edges_gdf.columns:
                 edges_gdf = edges_gdf[
                     edges_gdf['u'].isin(inside_nodes) | 
