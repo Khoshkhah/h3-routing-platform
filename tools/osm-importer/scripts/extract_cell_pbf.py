@@ -29,7 +29,7 @@ def main():
     parser.add_argument("--output", help="Output PBF file (default: cell-{cell}.osm.pbf)")
     parser.add_argument("--boundary-res", type=int, default=10, help="Intermediate resolution for boundary tracing (default: 10)")
     parser.add_argument("--convex-hull", action="store_true", help="Use fast convex hull instead of precise union")
-    parser.add_argument("--keep-boundary", action="store_true", help="Keep the generated GeoJSON boundary file")
+    # parser.add_argument("--keep-boundary", action="store_true", help="Keep the generated GeoJSON boundary file") # Always kept now
 
     args = parser.parse_args()
 
@@ -50,8 +50,10 @@ def main():
         logger.error(f"Error generating boundary: {e}")
         sys.exit(1)
 
-    # Save to temporary GeoJSON file
-    boundary_file = f"boundary_{args.cell}.geojson"
+    # Save to boundary file
+    boundaries_dir = Path("data/boundaries")
+    boundaries_dir.mkdir(parents=True, exist_ok=True)
+    boundary_file = boundaries_dir / f"cell_{args.cell}.geojson"
     
     # Osmium expects a FeatureCollection usually, but Feature handles often work. 
     # Wrapping in FeatureCollection is safer.
@@ -78,11 +80,7 @@ def main():
         logger.error(f"Extraction failed: {e}")
         sys.exit(1)
     finally:
-        if not args.keep_boundary and Path(boundary_file).exists():
-            Path(boundary_file).unlink()
-            logger.info(f"Removed temporary boundary file {boundary_file}")
-        elif args.keep_boundary:
-             logger.info(f"Kept boundary file {boundary_file}")
+         logger.info(f"Boundary file persisted at {boundary_file}")
 
 if __name__ == "__main__":
     main()
