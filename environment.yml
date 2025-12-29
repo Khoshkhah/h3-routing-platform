@@ -44,6 +44,12 @@ dependencies:
   
   # Testing
   - pytest
+  - pytest-cov
+
+  # Bindings & Utils
+  - pybind11
+  - boost-cpp
+  - geojson
   
   # Jupyter
   - ipykernel
