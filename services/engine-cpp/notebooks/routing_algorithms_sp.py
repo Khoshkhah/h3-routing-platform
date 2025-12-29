@@ -183,6 +183,117 @@ def dijkstra_sp(
 
 
 # =============================================================================
+# ALGORITHM 1.5: bi_dijkstra_sp - Bidirectional Dijkstra (no filtering)
+# =============================================================================
+
+def bi_dijkstra_sp(
+    con: duckdb.DuckDBPyConnection,
+    source_edge: int,
+    target_edge: int,
+    fwd_adj: Dict = None,
+    bwd_adj: Dict = None
+) -> Tuple[float, List[int], bool]:
+    """
+    Standard Bidirectional Dijkstra (no inside filtering).
+    Should match Dijkstra results exactly but potentially faster.
+    
+    Returns:
+        Tuple of (cost, path, success)
+    """
+    if source_edge == target_edge:
+        return get_edge_cost(con, source_edge), [source_edge], True
+    
+    # Load adjacency if not provided
+    if fwd_adj is None or bwd_adj is None:
+        fwd_adj, bwd_adj = load_adjacency(con)
+    
+    dist_fwd: Dict[int, float] = {source_edge: 0.0}
+    dist_bwd: Dict[int, float] = {}
+    parent_fwd: Dict[int, int] = {source_edge: source_edge}
+    parent_bwd: Dict[int, int] = {}
+    
+    pq_fwd = [(0.0, source_edge)]
+    target_cost = get_edge_cost(con, target_edge)
+    dist_bwd[target_edge] = target_cost
+    parent_bwd[target_edge] = target_edge
+    pq_bwd = [(target_cost, target_edge)]
+    
+    best = INF
+    meeting_edge = None
+    
+    while pq_fwd or pq_bwd:
+        # Forward step
+        if pq_fwd:
+            d, u = heapq.heappop(pq_fwd)
+            
+            if d > dist_fwd.get(u, INF) or d >= best:
+                pass
+            else:
+                for to_edge, cost, inside, cell_res in fwd_adj.get(u, []):
+                    # NO FILTERING
+                    nd = d + cost
+                    if to_edge not in dist_fwd or nd < dist_fwd[to_edge]:
+                        dist_fwd[to_edge] = nd
+                        parent_fwd[to_edge] = u
+                        heapq.heappush(pq_fwd, (nd, to_edge))
+                        
+                        # Check meeting
+                        if to_edge in dist_bwd:
+                            total = nd + dist_bwd[to_edge]
+                            if total < best:
+                                best = total
+                                meeting_edge = to_edge
+        
+        # Backward step
+        if pq_bwd:
+            d, u = heapq.heappop(pq_bwd)
+            
+            if d > dist_bwd.get(u, INF) or d >= best:
+                pass
+            else:
+                for from_edge, cost, inside, cell_res in bwd_adj.get(u, []):
+                    # NO FILTERING
+                    nd = d + cost
+                    if from_edge not in dist_bwd or nd < dist_bwd[from_edge]:
+                        dist_bwd[from_edge] = nd
+                        parent_bwd[from_edge] = u
+                        heapq.heappush(pq_bwd, (nd, from_edge))
+                        
+                        # Check meeting
+                        if from_edge in dist_fwd:
+                            total = dist_fwd[from_edge] + nd
+                            if total < best:
+                                best = total
+                                meeting_edge = from_edge
+        
+        # Early termination
+        if pq_fwd and pq_bwd:
+            if pq_fwd[0][0] >= best and pq_bwd[0][0] >= best:
+                break
+        elif not pq_fwd and not pq_bwd:
+            break
+    
+    if best == INF:
+        return -1, [], False
+    
+    # Reconstruct path
+    path = []
+    curr = meeting_edge
+    while curr != parent_fwd.get(curr):
+        path.append(curr)
+        curr = parent_fwd[curr]
+    path.append(curr)
+    path.reverse()
+    
+    curr = meeting_edge
+    while parent_bwd.get(curr) != curr:
+        curr = parent_bwd[curr]
+        path.append(curr)
+    
+    return best, path, True
+
+
+# =============================================================================
 # ALGORITHM 2: bi_classic - Bidirectional with inside filtering
 # =============================================================================
 

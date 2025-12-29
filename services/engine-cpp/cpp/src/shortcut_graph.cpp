@@ -438,6 +438,145 @@ QueryResult ShortcutGraph::query_classic(uint32_t source_edge, uint32_t target_e
     return {best, path, true, ""};
 }
 
+QueryResult ShortcutGraph::query_bidijkstra(uint32_t source_edge, uint32_t target_edge) const {
+    constexpr double INF = std::numeric_limits<double>::infinity();
+    
+    if (source_edge == target_edge) {
+        return {get_edge_cost(source_edge), {source_edge}, true, ""};
+    }
+
+    if (edge_meta_.find(source_edge) == edge_meta_.end()) {
+        return {-1, {}, false, "Source edge " + std::to_string(source_edge) + " not found in graph"};
+    }
+    if (edge_meta_.find(target_edge) == edge_meta_.end()) {
+        return {-1, {}, false, "Target edge " + std::to_string(target_edge) + " not found in graph"};
+    }
+    
+    std::unordered_map<uint32_t, double> dist_fwd, dist_bwd;
+    std::unordered_map<uint32_t, uint32_t> parent_fwd, parent_bwd;
+    MinHeap pq_fwd, pq_bwd;
+    
+    dist_fwd[source_edge] = 0.0;
+    parent_fwd[source_edge] = source_edge;
+    pq_fwd.push({0.0, source_edge});
+    
+    double target_cost = get_edge_cost(target_edge);
+    dist_bwd[target_edge] = target_cost;
+    parent_bwd[target_edge] = target_edge;
+    pq_bwd.push({target_cost, target_edge});
+    
+    double best = INF;
+    uint32_t meeting = 0;
+    bool found = false;
+    
+    while (!pq_fwd.empty() || !pq_bwd.empty()) {
+        // Forward step
+        if (!pq_fwd.empty()) {
+            auto [d, u] = pq_fwd.top(); pq_fwd.pop();
+            
+            auto it = dist_fwd.find(u);
+            if (it != dist_fwd.end() && d > it->second) continue;
+            if (d >= best) continue;
+            
+            auto adj_it = fwd_adj_.find(u);
+            if (adj_it != fwd_adj_.end()) {
+                for (size_t idx : adj_it->second) {
+                    const Shortcut& sc = shortcuts_[idx];
+                    // NO FILTERING for bi_dijkstra
+                    // if (sc.inside != 1) continue;
+                    
+                    double nd = d + sc.cost;
+                    auto v_it = dist_fwd.find(sc.to);
+                    if (v_it == dist_fwd.end() || nd < v_it->second) {
+                        dist_fwd[sc.to] = nd;
+                        parent_fwd[sc.to] = u;
+                        pq_fwd.push({nd, sc.to});
+                        
+                        auto bwd_it = dist_bwd.find(sc.to);
+                        if (bwd_it != dist_bwd.end()) {
+                            double total = nd + bwd_it->second;
+                            if (total < best) {
+                                best = total;
+                                meeting = sc.to;
+                                found = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Backward step
+        if (!pq_bwd.empty()) {
+            auto [d, u] = pq_bwd.top(); pq_bwd.pop();
+            
+            auto it = dist_bwd.find(u);
+            if (it != dist_bwd.end() && d > it->second) continue;
+            if (d >= best) continue;
+            
+            auto adj_it = bwd_adj_.find(u);
+            if (adj_it != bwd_adj_.end()) {
+                for (size_t idx : adj_it->second) {
+                    const Shortcut& sc = shortcuts_[idx];
+                    // NO FILTERING for bi_dijkstra
+                    // if (sc.inside != -1 && sc.inside != 0) continue;
+                    
+                    double nd = d + sc.cost;
+                    auto prev_it = dist_bwd.find(sc.from);
+                    if (prev_it == dist_bwd.end() || nd < prev_it->second) {
+                        dist_bwd[sc.from] = nd;
+                        parent_bwd[sc.from] = u;
+                        pq_bwd.push({nd, sc.from});
+                        
+                        auto fwd_it = dist_fwd.find(sc.from);
+                        if (fwd_it != dist_fwd.end()) {
+                            double total = fwd_it->second + nd;
+                            if (total < best) {
+                                best = total;
+                                meeting = sc.from;
+                                found = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Early termination
+        if (!pq_fwd.empty() && !pq_bwd.empty()) {
+            if (pq_fwd.top().dist >= best && pq_bwd.top().dist >= best) break;
+        } else if (pq_fwd.empty() && pq_bwd.empty()) {
+            break;
+        }
+    }
+    
+    if (!found) return {-1, {}, false, "No path found between source and target"};
+    
+    // Reconstruct path - use iterators to avoid inserting default values
+    std::vector<uint32_t> path;
+    uint32_t curr = meeting;
+    
+    // Forward path: meeting -> source
+    while (true) {
+        path.push_back(curr);
+        auto it = parent_fwd.find(curr);
+        if (it == parent_fwd.end() || it->second == curr) break;
+        curr = it->second;
+    }
+    std::reverse(path.begin(), path.end());
+    
+    // Backward path: meeting -> target
+    curr = meeting;
+    while (true) {
+        auto it = parent_bwd.find(curr);
+        if (it == parent_bwd.end() || it->second == curr) break;
+        curr = it->second;
+        path.push_back(curr);
+    }
+    
+    return {best, path, true, ""};
+}
+
 QueryResult ShortcutGraph::query_pruned(uint32_t source_edge, uint32_t target_edge) const {
     constexpr double INF = std::numeric_limits<double>::infinity();
     

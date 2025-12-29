@@ -144,6 +144,11 @@ public:
     QueryResult query_classic(uint32_t source_edge, uint32_t target_edge) const;
 
     /**
+     * @brief Standard bidirectional Dijkstra (no filtering).
+     */
+    QueryResult query_bidijkstra(uint32_t source_edge, uint32_t target_edge) const;
+
+    /**
      * @brief Pruned bidirectional Dijkstra with H3 parent_check.
      */
     QueryResult query_pruned(uint32_t source_edge, uint32_t target_edge) const;

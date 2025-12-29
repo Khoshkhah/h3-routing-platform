@@ -82,6 +82,7 @@ class CHQueryEngine:
         # Map new _sp algorithm names to backend names
         ALGORITHM_MAP = {
             "dijkstra_sp": ("one_to_one", "dijkstra", 1),
+            "bi_dijkstra_sp": ("one_to_one", "bidijkstra", 1),
             "bi_classic_sp": ("one_to_one", "classic", 1),
             "bi_lca_res_sp": ("one_to_one", "pruned", 1),
             "bi_lca_sp": ("one_to_one", "pruned", 1),  # Fallback to pruned until C++ port

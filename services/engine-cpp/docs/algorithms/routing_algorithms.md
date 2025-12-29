@@ -18,8 +18,9 @@ All algorithms find shortest paths on a **shortcut graph** built from H3 hierarc
 | # | Name | Type | High Cell | Forward | Backward | Speed |
 |---|------|------|-----------|---------|----------|-------|
 | 1 | `dijkstra` | 1:1 | No | All | N/A | Baseline |
-| 2 | `bi_classic` | 1:1 | No | Up only | Up + Down | Fast |
-| 3 | `bi_lca_res` | 1:1 | Yes | Toward LCA | Toward LCA | Faster |
+| 1.5 | `bi_dijkstra` | 1:1 | No | All | All | Fast |
+| 2 | `bi_classic` | 1:1 | No | Up only | Up + Down | Faster |
+| 3 | `bi_lca_res` | 1:1 | Yes | Toward LCA | Toward LCA | Fast |
 | 4 | `uni_lca` | 1:1 | Yes | Phase-based | N/A | Fast |
 | 5 | `bi_lca` | 1:1 | Yes | Phase-based | Phase-based | Fastest |
 | 6 | `m2m_classic` | M:N | No | Up only | Up + Down | Fast |
@@ -44,6 +45,17 @@ def dijkstra(source, target):
     for shortcut in neighbors:
         explore(shortcut)  # All shortcuts allowed
 ```
+
+---
+
+### 1.5 Bidirectional Dijkstra (`bi_dijkstra`)
+
+**Standard Bidirectional Dijkstra** with no filtering.
+
+- **Use case:** Performance comparison baseline
+- **Filtering:** None
+- **Optimality:** Always finds optimal path (100% correct)
+- **Speed:** Faster than unidirectional Dijkstra (usually 1.5-2x), but slower than filtered algorithms.
 
 ---
 
@@ -199,8 +211,9 @@ def m2m_classic(sources: List[int], targets: List[int]):
 | Algorithm | Correctness | Speed | Memory |
 |-----------|-------------|-------|--------|
 | `dijkstra` | 100% | 1x (baseline) | Low |
-| `bi_classic` | ~95% | 5-10x | Low |
-| `bi_lca_res` | ~90% | 10-20x | Low |
+| `bi_dijkstra` | 100% | ~2x | Low |
+| `bi_classic` | 100% | 5-10x | Low |
+| `bi_lca_res` | 100% | 10-20x | Low |
 | `uni_lca` | 100% | 10x | Low |
 | `bi_lca` | 100% | 15-20x | Low |
 

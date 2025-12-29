@@ -653,6 +653,8 @@ int main(int argc, char* argv[]) {
                     result = ds->graph.query_pruned(source, target);
                 } else if (algorithm == "unidirectional") {
                     result = ds->graph.query_unidirectional(source, target);
+                } else if (algorithm == "bidijkstra") {
+                    result = ds->graph.query_bidijkstra(source, target);
                 } else {
                     result = ds->graph.query_classic(source, target);
                 }

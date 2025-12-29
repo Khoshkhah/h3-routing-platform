@@ -247,6 +247,7 @@ html_code = f"""
                 <select id="search-mode" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
                     <option value="m2m_classic_sp">Many-to-Many (KNN)</option>
                     <option value="bi_classic_sp">Bidirectional Classic</option>
+                    <option value="bi_dijkstra_sp">Bi-Dijkstra (Baseline)</option>
                     <option value="bi_lca_res_sp">Bidirectional Pruned (Res)</option>
                     <option value="bi_lca_sp">Bidirectional Phase-Based (Best)</option>
                     <option value="uni_lca_sp">Unidirectional Pruned</option>

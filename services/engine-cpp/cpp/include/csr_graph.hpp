@@ -120,6 +120,7 @@ public:
     // ========== QUERIES ==========
     
     CSRQueryResult query_classic(uint32_t source_edge, uint32_t target_edge) const;
+    CSRQueryResult query_bidijkstra(uint32_t source_edge, uint32_t target_edge) const;
     CSRQueryResult query_pruned(uint32_t source_edge, uint32_t target_edge) const;
     CSRQueryResult query_unidirectional(uint32_t source_edge, uint32_t target_edge) const;
     CSRQueryResult query_dijkstra(uint32_t source_edge, uint32_t target_edge) const;

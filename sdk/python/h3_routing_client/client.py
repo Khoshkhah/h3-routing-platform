@@ -145,7 +145,8 @@ class RoutingClient:
             end_lat, end_lng: Target coordinates
             mode: Search mode ("knn", "one_to_one", or "one_to_one_v2")
             num_candidates: Number of nearest edges to consider per point
-            algorithm: Routing algorithm ("pruned", "classic", "unidirectional", or "dijkstra")
+            algorithm: Routing algorithm (e.g., "bi_classic_sp", "bi_dijkstra_sp", "bi_lca_res_sp", 
+                       "bi_lca_sp", "uni_lca_sp", "m2m_classic_sp", "dijkstra_sp")
 
         Returns:
             RouteResponse object containing:
