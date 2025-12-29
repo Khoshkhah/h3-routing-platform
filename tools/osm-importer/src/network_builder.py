@@ -50,13 +50,19 @@ class NetworkBuilder:
             # We need to filter based on geometry. pyrosm nodes_gdf has 'geometry' column (Point)
             # Apply filter to find inside nodes
             tqdm.pandas(desc="Filtering nodes by H3")
-            nodes_gdf["inside"] = nodes_gdf["geometry"].progress_apply(is_in_cell)
-            inside_nodes = set(nodes_gdf[nodes_gdf["inside"]].index)
+            nodes_gdf["inside"] = nodes_gdf["geometry"].apply(
+                lambda p: h3.latlng_to_cell(p.y, p.x, res) if p else None
+            ) == self.h3_cell
+
+            # If 'id' is in columns, use that for matching, otherwise assume index is ID
+            if 'id' in nodes_gdf.columns:
+                target_ids = nodes_gdf[nodes_gdf["inside"]]['id']
+            else:
+                target_ids = nodes_gdf[nodes_gdf["inside"]].index
+                
+            inside_nodes = set(target_ids)
             
             # Filter edges: Keep if u OR v is inside
-            # NOTE: We do NOT filter nodes_gdf to ensure boundary nodes (which are outside
-            # but connected to an inside node) remain available for the graph.
-            # Only edges completely outside are removed.
             if 'u' in edges_gdf.columns and 'v' in edges_gdf.columns:
                 edges_gdf = edges_gdf[
                     edges_gdf['u'].isin(inside_nodes) | 
@@ -77,6 +83,9 @@ class NetworkBuilder:
         if isolates:
             print(f"Removing {len(isolates)} isolated nodes")
             self.graph.remove_nodes_from(isolates)
+            
+        if self.graph.number_of_edges() == 0:
+            raise ValueError(f"Graph is empty after filtering for cell {self.h3_cell}. Check input data or cell ID.")
         
         return self.graph
     
