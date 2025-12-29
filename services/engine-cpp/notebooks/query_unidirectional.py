@@ -56,6 +56,7 @@ def compute_high_cell(con: duckdb.DuckDBPyConnection, source_edge: int, target_e
     """, [source_edge, target_edge]).fetchone()
     
     if not result:
+        print(f"No LCA found for edges {source_edge} and {target_edge}")
         return 0, -1
     
     src_res, src_cell, tgt_res, tgt_cell = result
@@ -75,15 +76,17 @@ def compute_high_cell(con: duckdb.DuckDBPyConnection, source_edge: int, target_e
         return 0, -1
     
     # Find LCA
-    lca = h3.cell_to_parent(src_cell, 0)  # Start at res 0
+    lca = 0 #h3.cell_to_parent(src_cell, 0)  # Start at res 0
     for res in range(15, -1, -1):
         p1 = h3.cell_to_parent(src_cell, res) if h3.get_resolution(src_cell) >= res else None
         p2 = h3.cell_to_parent(tgt_cell, res) if h3.get_resolution(tgt_cell) >= res else None
         if p1 and p2 and p1 == p2:
             lca = p1
             break
-    
-    return h3.str_to_int(lca), h3.get_resolution(lca)
+    if lca == 0:
+        return 0, -1
+    else:   
+        return h3.str_to_int(lca), h3.get_resolution(lca)
 
 
 def get_edge_cost(con: duckdb.DuckDBPyConnection, edge_id: int) -> float:
@@ -149,37 +152,38 @@ def query_unidirectional_pruned(
     src_res = get_edge_res(con, source_edge)
     
     # dist[(edge, counter, used_minus1)] -> distance
-    dist: Dict[Tuple[int, int, bool], float] = {}
-    parent: Dict[Tuple[int, int, bool], Tuple[int, int, bool]] = {}
+    dist: Dict[int, float] = {}
+    parent: Dict[int, int] = {}
     
-    start_key = (source_edge, 0, False)
+    start_key = source_edge
     dist[start_key] = 0.0
     parent[start_key] = start_key
     
     # Priority queue: (distance, edge, u_res, counter, used_minus1)
-    pq = [(0.0, source_edge, src_res, 0, False)]
+    phase = 0
+    pq = [(0.0, source_edge, src_res, phase)]
     
     MAX_USES = 2  # Maximum times inside=0 or -2 can be used
-    
     # Step 4: Dijkstra with inside filtering
     while pq:
-        d, u, u_res, counter, used_minus1 = heapq.heappop(pq)
-        state_key = (u, counter, used_minus1)
+        d, u, u_res, phase = heapq.heappop(pq)
+        state_key = u
         
         # Skip if we already found better path
         if state_key in dist and d > dist[state_key]:
             continue
         
-        # Found target
+        # Found target - add target edge cost like C++ API
         if u == target_edge:
             path = []
             curr_key = state_key
-            while curr_key != parent.get(curr_key, curr_key):
-                path.append(curr_key[0])
+            while curr_key != parent.get(curr_key):
+                path.append(curr_key)
                 curr_key = parent[curr_key]
-            path.append(curr_key[0])
+            path.append(curr_key)
             path.reverse()
-            return d, path, True
+            target_cost = get_edge_cost(con, target_edge)
+            return d + target_cost, path, True
         
         # Explore neighbors
         if u not in fwd_adj:
@@ -187,35 +191,41 @@ def query_unidirectional_pruned(
         
         for to_edge, cost, inside, cell_res in fwd_adj[u]:
             allowed = False
-            next_counter = counter
-            next_used_minus1 = used_minus1
+            next_phase = phase
             
             # ========== FILTERING LOGIC ==========
-            if u_res > high_res:
-                # ABOVE PEAK: only inside=1 allowed
-                if inside == 1 and not used_minus1:
+            # ABOVE PEAK: only inside=1 allowed
+            if phase == 0 or phase == 1:
+                if cell_res > high_res and inside == 1:
                     allowed = True
-                elif inside == -1 and used_minus1:
+                    next_phase = 1
+                elif cell_res <= high_res and inside == 1:
                     allowed = True
-            elif inside in {0, -2} and counter < MAX_USES:
-                allowed = True
-                next_counter = counter + 1
-                next_used_minus1 = True
-            elif inside == -1:
-                allowed = True
-                next_used_minus1 = True
+                    next_phase = 2
+                elif inside != 1:
+                    allowed = True
+                    next_phase = 3
+            elif phase==2:
+                if inside != 1:
+                    allowed = True
+                    next_phase = 3
+            elif phase==3:
+                if inside == -1 :
+                    allowed = True
+                    next_phase = 3
+            
             # =====================================
             
             if not allowed:
                 continue
             
             nd = d + cost
-            next_key = (to_edge, next_counter, next_used_minus1)
+            next_key = to_edge
             
             if next_key not in dist or nd < dist[next_key]:
                 dist[next_key] = nd
                 parent[next_key] = state_key
-                heapq.heappush(pq, (nd, to_edge, cell_res, next_counter, next_used_minus1))
+                heapq.heappush(pq, (nd, to_edge, cell_res, next_phase))
     
     return -1, [], False
 
@@ -270,7 +280,8 @@ def query_dijkstra(
                 curr = parent[curr]
             path.append(curr)
             path.reverse()
-            return d, path, True
+            target_cost = get_edge_cost(con, target_edge)
+            return d + target_cost, path, True
         
         if u not in fwd_adj:
             continue
@@ -315,7 +326,8 @@ def query_dijkstra_cached(
                 curr = parent[curr]
             path.append(curr)
             path.reverse()
-            return d, path, True
+            target_cost = get_edge_cost(con, target_edge)
+            return d + target_cost, path, True
         
         if u not in fwd_adj:
             continue
@@ -435,7 +447,7 @@ def run_batch_test(con: duckdb.DuckDBPyConnection, num_samples: int):
     mismatch_details = []
     
     start_time = time.time()
-    stop_on_mismatch = True  # Stop at first mismatch for debugging
+    stop_on_mismatch = False  # Continue to see all results
     
     for i in range(num_samples):
         # Random source and target

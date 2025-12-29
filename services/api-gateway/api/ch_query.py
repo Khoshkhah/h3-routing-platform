@@ -79,12 +79,24 @@ class CHQueryEngine:
         """
         Compute route using the routing server's full stack (NN + CH).
         """
-        # Mapping for Dijkstra
-        if search_mode == "one_to_one":
+        # Map new _sp algorithm names to backend names
+        ALGORITHM_MAP = {
+            "dijkstra_sp": ("one_to_one", "dijkstra", 1),
+            "bi_classic_sp": ("one_to_one", "classic", 1),
+            "bi_lca_res_sp": ("one_to_one", "pruned", 1),
+            "bi_lca_sp": ("one_to_one", "pruned", 1),  # Fallback to pruned until C++ port
+            "uni_lca_sp": ("one_to_one", "unidirectional", 1),
+            "m2m_classic_sp": ("knn", "classic", num_candidates),
+        }
+        
+        if search_mode in ALGORITHM_MAP:
+            search_mode, algorithm, num_candidates = ALGORITHM_MAP[search_mode]
+        # Legacy support for old names
+        elif search_mode == "one_to_one":
             num_candidates = 1
         elif search_mode == "one_to_one_v2":
             num_candidates = 1
-            if algorithm == "pruned": algorithm = "pruned" # keep default
+            if algorithm == "pruned": algorithm = "pruned"
         elif search_mode == "dijkstra":
             search_mode = "one_to_one"
             num_candidates = 1

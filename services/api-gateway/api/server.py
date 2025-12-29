@@ -317,7 +317,7 @@ async def compute_route(
     search_mode: str = Query("knn", description="Search mode: 'knn', 'one_to_one', or 'one_to_one_v2'"),
     num_candidates: int = Query(3, description="Number of candidates for KNN", ge=1, le=10),
     search_radius: float = Query(2000.0, description="Search radius in meters", ge=10.0, le=10000.0),
-    algorithm: str = Query("pruned", description="Routing algorithm: 'pruned', 'classic', 'unidirectional', 'dijkstra'")
+    algorithm: str = Query("pruned", description="Routing algorithm: 'pruned', 'classic', 'unidirectional', 'dijkstra', and _sp variants")
 ):
     """
     Compute a route between Source and Target.
@@ -326,8 +326,11 @@ async def compute_route(
     if dataset not in registry.list_datasets():
         return RouteResponse(success=False, error=f"Dataset not found: {dataset}")
     
-    if search_mode not in ['knn', 'one_to_one', 'one_to_one_v2', 'dijkstra']:
-        return RouteResponse(success=False, error="search_mode must be 'knn', 'one_to_one', 'one_to_one_v2', or 'dijkstra'")
+    # Updated validation to allow new modes/algorithms
+    # Note: mapping happens in ch_query.py, so we just need to let them pass here
+    pass
+    # if search_mode not in ['knn', 'one_to_one', 'one_to_one_v2', 'dijkstra']:
+    #     return RouteResponse(success=False, error="search_mode must be 'knn', 'one_to_one', 'one_to_one_v2', or 'dijkstra'")
     
     try:
         # Resolve coordinate parameters: prefer current names, fall back to legacy names

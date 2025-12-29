@@ -245,11 +245,12 @@ html_code = f"""
             <div style="padding: 10px; border-bottom: 1px solid #ddd;">
                 <label style="font-size: 12px; color: #666; display: block; margin-bottom: 5px;">Search Mode</label>
                 <select id="search-mode" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
-                    <option value="knn">KNN (K-Nearest)</option>
-                    <option value="one_to_one">One-to-One (Classic)</option>
-                    <option value="one_to_one_v2">One-to-One (v2)</option>
-                    <option value="unidirectional">Unidirectional (Pruned)</option>
-                    <option value="dijkstra">Dijkstra (No CH)</option>
+                    <option value="m2m_classic_sp">Many-to-Many (KNN)</option>
+                    <option value="bi_classic_sp">Bidirectional Classic</option>
+                    <option value="bi_lca_res_sp">Bidirectional Pruned (Res)</option>
+                    <option value="bi_lca_sp">Bidirectional Phase-Based (Best)</option>
+                    <option value="uni_lca_sp">Unidirectional Pruned</option>
+                    <option value="dijkstra_sp">Dijkstra (Baseline)</option>
                 </select>
             </div>
             <!-- Radius Container Removed -->
@@ -761,10 +762,11 @@ html_code = f"""
             const mode = this.value;
             const knnContainer = document.getElementById('knn-container');
             
-            if (mode === 'one_to_one' || mode === 'one_to_one_v2' || mode === 'dijkstra' || mode === 'unidirectional') {{
-                knnContainer.style.display = 'none';
-            }} else {{
+            // Only show candidates for KNN mode (m2m_classic_sp)
+            if (mode === 'm2m_classic_sp') {{
                 knnContainer.style.display = 'block';
+            }} else {{
+                knnContainer.style.display = 'none';
             }}
             
             // Recalculate route with new search mode

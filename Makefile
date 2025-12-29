@@ -24,7 +24,7 @@ install:
 build:
 	@echo "Building C++ Engine..."
 	mkdir -p services/engine-cpp/cpp/build
-	cd services/engine-cpp/cpp/build && cmake .. && make -j4
+	cd services/engine-cpp/cpp/build && cmake .. && cmake --build . -- -j4
 
 # --- Run Services ---
 run-engine:
