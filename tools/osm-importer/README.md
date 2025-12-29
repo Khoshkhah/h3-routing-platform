@@ -55,6 +55,17 @@ Then run the converter:
 python main.py --config config/config.yaml
 ```
 
+```
+
+### 3. Extracting by H3 Cell
+To clip a PBF file to a specific H3 cell (with buffer) using `h3-toolkit`:
+```bash
+python scripts/extract_cell_pbf.py \
+    --input data/maps/large_region.osm.pbf \
+    --cell 86283082fffffff \
+    --output data/maps/cell_extract.osm.pbf
+```
+
 ---
 
 ## Output Data Structure

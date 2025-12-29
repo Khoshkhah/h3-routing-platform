@@ -55,6 +55,20 @@ Configure your input in `config/config.yaml`. Then run the converter:
 python tools/osm-importer/main.py --config config/config.yaml
 ```
 
+
+### 3. Extracting by H3 Cell
+To clip a PBF file to a specific H3 cell (with buffer) using `h3-toolkit`:
+```bash
+python tools/osm-importer/scripts/extract_cell_pbf.py \
+    --input data/maps/large_region.osm.pbf \
+    --cell 86283082fffffff \
+    --output data/maps/cell_extract.osm.pbf
+```
+*   **Buffer**: Automatically buffers the cell to ensure full coverage of children at finer resolutions.
+*   **Options**:
+    *   `--boundary-res`: Intermediate resolution for boundary tracing (default: 10).
+    *   `--convex-hull`: Use faster convex hull boundary.
+
 ---
 
 ## Output Data Structure
