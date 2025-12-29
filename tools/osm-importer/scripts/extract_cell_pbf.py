@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import h3_toolkit as h3t
 
+import filter_pbf as pbf_filter
+
 # Configure logging
 Path('logs').mkdir(exist_ok=True)
 logging.basicConfig(
@@ -71,26 +73,9 @@ def main():
     logger.info(f"Filtering PBF to {output_file}...")
 
     try:
-        cmd = [
-            "osmium", "extract",
-            "-p", boundary_file,
-            args.input,
-            "-o", output_file,
-            "--overwrite"
-        ]
-        
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        # osmium usually prints to stderr
-        if result.stderr:
-            logger.info(f"Osmium Output:\n{result.stderr.strip()}")
-        
-        logger.info("Filtering completed successfully!")
-
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Error during osmium execution: {e.stderr}")
-        sys.exit(1)
-    except FileNotFoundError:
-        logger.error("Error: 'osmium' command not found. Please install osmium-tool (sudo apt install osmium-tool).")
+        pbf_filter.filter_pbf(args.input, boundary_file, output_file)
+    except Exception as e:
+        logger.error(f"Extraction failed: {e}")
         sys.exit(1)
     finally:
         if not args.keep_boundary and Path(boundary_file).exists():
