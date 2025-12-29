@@ -30,6 +30,48 @@ uint64_t cell_to_parent(uint64_t cell, int target_res) {
 
 uint64_t find_lca(uint64_t cell1, uint64_t cell2) {
     if (cell1 == 0 || cell2 == 0) return 0;
+
+    int res1 = (cell1 >> 52) & 0xF;
+    int res2 = (cell2 >> 52) & 0xF;
+    int common_res = (res1 < res2) ? res1 : res2;
+
+    int shift = 45 - (common_res * 3);
+    uint64_t mask = (0xFFFFFFFFFFFFFFFFULL << shift);
+    
+    uint64_t a_aligned = cell1 & mask;
+    uint64_t b_aligned = cell2 & mask;
+
+    uint64_t RES_MASK_INV = ~(0xFULL << 52);
+    // XOR ignoring resolution bits
+    uint64_t diff = (a_aligned & RES_MASK_INV) ^ (b_aligned & RES_MASK_INV);
+
+    if (diff == 0) {
+        return (res1 < res2) ? cell1 : cell2;
+    }
+
+    // bit_length equivalent using clzll
+    int zeros = __builtin_clzll(diff);
+    int msb_diff = 64 - zeros;
+
+    if (msb_diff > 45) return 0; // Different Base Cells
+
+    int diverge_res = (45 - msb_diff) / 3;
+
+    int final_shift = 45 - (diverge_res * 3);
+    uint64_t lcp = cell1 & (0xFFFFFFFFFFFFFFFFULL << final_shift);
+    
+    // Update resolution bits
+    lcp &= RES_MASK_INV;
+    lcp |= ((uint64_t)diverge_res << 52);
+    
+    // Fill lower bits with 1s (padding)
+    lcp |= ~(0xFFFFFFFFFFFFFFFFULL << final_shift);
+
+    return lcp;
+}
+
+uint64_t find_lca_old(uint64_t cell1, uint64_t cell2) {
+    if (cell1 == 0 || cell2 == 0) return 0;
     
     int res1 = getResolution(cell1);
     int res2 = getResolution(cell2);

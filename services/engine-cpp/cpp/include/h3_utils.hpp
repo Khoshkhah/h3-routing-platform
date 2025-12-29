@@ -26,6 +26,11 @@ uint64_t cell_to_parent(uint64_t cell, int target_res);
 uint64_t find_lca(uint64_t cell1, uint64_t cell2);
 
 /**
+ * @brief Find lowest common ancestor (Iterative Fallback).
+ */
+uint64_t find_lca_old(uint64_t cell1, uint64_t cell2);
+
+/**
  * @brief Check if node_cell is within high_cell region.
  * @return true if node is within the high_cell ancestor
  */
