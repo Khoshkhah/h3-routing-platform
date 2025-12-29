@@ -44,6 +44,9 @@ H3-Toolkit extends Uber's H3 library with efficient algorithms for computing cel
 # From tools directory
 cd tools/h3-toolkit
 
+# Install dependencies
+conda install -c conda-forge boost-cpp
+
 # Build and install
 pip install -e .
 ```
