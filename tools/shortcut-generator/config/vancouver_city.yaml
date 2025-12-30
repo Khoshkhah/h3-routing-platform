@@ -4,6 +4,7 @@
 
 input:
   district: "Vancouver_City"
+  boundary_file: "../osm-importer/data/boundaries/burnaby.geojson"  # Add this line
 
 # Algorithm Configuration
 algorithm:

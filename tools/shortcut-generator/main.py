@@ -106,12 +106,17 @@ def run_partitioned_parallel(cfg):
     persist_dir.mkdir(parents=True, exist_ok=True)
     db_path = str(persist_dir / f"{cfg.input.district}.db")
     
-    # Delete existing DB if fresh_start is enabled
+    # Delete existing DB and checkpoint files if fresh_start is enabled
     if cfg.duckdb.fresh_start:
         import glob
         for f in glob.glob(f"{db_path}*"):
             Path(f).unlink()
             logger.info(f"Deleted: {f}")
+        # Also delete parquet checkpoint
+        parquet_checkpoint = persist_dir / "forward_deactivated.parquet"
+        if parquet_checkpoint.exists():
+            parquet_checkpoint.unlink()
+            logger.info(f"Deleted: {parquet_checkpoint}")
     
     output_dir = Path(cfg.output.directory)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -149,14 +154,24 @@ def run_partitioned_parallel(cfg):
     # Load shared data
     processor.load_shared_data(cfg.input.edges_file, cfg.input.graph_file)
     
-    # Check if we can resume from Phase 3 (forward_deactivated already populated)
+    # Check if we can resume from Phase 3
+    # Check parquet file first, then table
+    parquet_path = persist_dir / "forward_deactivated.parquet"
     try:
         forward_count = processor.con.execute("SELECT count(*) FROM forward_deactivated").fetchone()[0]
     except:
         forward_count = 0
     
-    if forward_count > 0:
-        logger.info(f"Resuming: forward_deactivated has {forward_count:,} rows. Skipping Phase 1 & 2.")
+    can_resume = forward_count > 0 or parquet_path.exists()
+    
+    if can_resume:
+        if forward_count > 0:
+            logger.info(f"Resuming: forward_deactivated table has {forward_count:,} rows. Skipping Phase 1 & 2.")
+        elif parquet_path.exists():
+            logger.info(f"Resuming: Found {parquet_path}. Loading and skipping Phase 1 & 2.")
+            # Drop existing empty table if it exists, then create from parquet
+            processor.con.execute("DROP TABLE IF EXISTS forward_deactivated")
+            processor.con.execute(f"CREATE TABLE forward_deactivated AS SELECT * FROM '{parquet_path}'")
         # Clear backward_deactivated for fresh Phase 3
         processor.con.execute("DELETE FROM backward_deactivated")
         res_partition_cells = []  # Not needed for Phase 3
@@ -315,8 +330,8 @@ def run_partitioned_parallel(cfg):
     print(f"Saved shortcuts to: {output_file}")
     
     # Cleanup: Drop temporary tables, keep only essential ones
-    # Essential: edges (with full data), shortcuts, dataset_info
-    tables_to_keep = {'edges', 'shortcuts', 'dataset_info'}
+    # Essential: edges, shortcuts, dataset_info, elementary_shortcuts (for debugging)
+    tables_to_keep = {'edges', 'shortcuts', 'dataset_info', 'elementary_shortcuts'}
     all_tables = [r[0] for r in processor.con.execute(
         "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
     ).fetchall()]

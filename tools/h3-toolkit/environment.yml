@@ -1,0 +1,19 @@
+name: h3-toolkit
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.10
+  - pip
+  - h3-py
+  - shapely
+  - geojson
+  - cmake
+  - make
+  - cxx-compiler
+  - pytest
+  - pytest-cov
+  - folium
+  - mapclassify
+  - jupyter
+  - pybind11

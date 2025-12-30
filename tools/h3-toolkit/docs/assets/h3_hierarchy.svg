@@ -1,0 +1,27 @@
+<svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .parent { fill: #f8f9fa; stroke: #6c757d; stroke-width: 3; stroke-dasharray: 8; }
+    .child { fill: rgba(13, 110, 253, 0.1); stroke: #0d6efd; stroke-width: 2; }
+    .center-child { fill: rgba(25, 135, 84, 0.1); stroke: #198754; stroke-width: 2; }
+    .label { font-family: sans-serif; font-size: 14px; font-weight: bold; text-anchor: middle; }
+    .parent-label { font-size: 18px; fill: #6c757d; }
+  </style>
+
+  <polygon points="200,20 355.8,110 355.8,290 200,380 44.2,290 44.2,110" class="parent" />
+  <text x="200" y="55" class="label parent-label">Resolution R (Parent)</text>
+
+  <g transform="rotate(19.1, 200, 200)">
+    <polygon points="200,135 256.3,167.5 256.3,232.5 200,265 143.7,232.5 143.7,167.5" class="center-child" />
+    <text x="200" y="205" class="label" transform="rotate(-19.1, 200, 200)">0</text>
+    
+    <g transform="translate(112.6, -65)">
+       <polygon points="200,135 256.3,167.5 256.3,232.5 200,265 143.7,232.5 143.7,167.5" class="child" />
+       <text x="200" y="205" class="label" transform="rotate(-19.1, 200, 200)">1</text>
+    </g>
+    <g transform="translate(112.6, 65)"><polygon points="200,135 256.3,167.5 256.3,232.5 200,265 143.7,232.5 143.7,167.5" class="child" /><text x="200" y="205" class="label" transform="rotate(-19.1, 200, 200)">2</text></g>
+    <g transform="translate(0, 130)"><polygon points="200,135 256.3,167.5 256.3,232.5 200,265 143.7,232.5 143.7,167.5" class="child" /><text x="200" y="205" class="label" transform="rotate(-19.1, 200, 200)">3</text></g>
+    <g transform="translate(-112.6, 65)"><polygon points="200,135 256.3,167.5 256.3,232.5 200,265 143.7,232.5 143.7,167.5" class="child" /><text x="200" y="205" class="label" transform="rotate(-19.1, 200, 200)">4</text></g>
+    <g transform="translate(-112.6, -65)"><polygon points="200,135 256.3,167.5 256.3,232.5 200,265 143.7,232.5 143.7,167.5" class="child" /><text x="200" y="205" class="label" transform="rotate(-19.1, 200, 200)">5</text></g>
+    <g transform="translate(0, -130)"><polygon points="200,135 256.3,167.5 256.3,232.5 200,265 143.7,232.5 143.7,167.5" class="child" /><text x="200" y="205" class="label" transform="rotate(-19.1, 200, 200)">6</text></g>
+  </g>
+</svg>

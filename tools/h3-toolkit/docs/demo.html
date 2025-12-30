@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Demo - H3-Toolkit</title>
+    <!-- Use exact same CSS as other pages -->
+    <link rel="stylesheet" href="/h3-toolkit/assets/css/just-the-docs-default.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        .map-container {
+            height: 280px;
+            width: 100%;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .demo-card {
+            background: #f5f6fa;
+            border-radius: 4px;
+            padding: 1rem;
+            margin: 1rem 0;
+            border: 1px solid #eeebee;
+        }
+
+        .demo-card h3 {
+            margin: 0 0 0.5rem 0;
+            font-size: 1rem;
+            font-weight: 600;
+            color: #27262b;
+        }
+
+        .demo-card h3 code {
+            font-weight: 400;
+            color: #5c5962;
+            margin-left: 0.5rem;
+            background: transparent;
+        }
+
+        .legend {
+            font-size: 0.8125rem;
+            margin-top: 0.5rem;
+        }
+
+        .color-box {
+            display: inline-block;
+            width: 16px;
+            height: 4px;
+            margin-right: 8px;
+            border-radius: 2px;
+            vertical-align: middle;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="side-bar">
+        <div class="site-header">
+            <a href="/h3-toolkit/" class="site-title lh-tight">H3-Toolkit</a>
+        </div>
+        <nav aria-label="Main" class="site-nav">
+            <ul class="nav-list">
+                <li class="nav-list-item"><a href="/h3-toolkit/" class="nav-list-link">Home</a></li>
+                <li class="nav-list-item active"><a href="/h3-toolkit/demo.html"
+                        class="nav-list-link active">Interactive Demo</a></li>
+                <li class="nav-list-item"><a href="/h3-toolkit/api_reference.html" class="nav-list-link">API
+                        Reference</a></li>
+                <li class="nav-list-item"><a href="/h3-toolkit/concepts.html" class="nav-list-link">Concepts</a></li>
+            </ul>
+        </nav>
+    </div>
+
+    <div class="main">
+        <div class="main-content-wrap">
+            <div class="main-content">
+                <h1 id="interactive-demo">Interactive Demo</h1>
+                <p><strong>Demo Cell:</strong> <code class="language-plaintext highlighter-rouge">872830828ffffff</code>
+                    (Resolution 7, San Francisco) | <strong>Intermediate Resolution:</strong> 10</p>
+
+                <div class="demo-card">
+                    <h3>Original Cell Boundary <code>cell_boundary_to_geojson_cpp()</code></h3>
+                    <div id="map1" class="map-container"></div>
+                    <div class="legend"><span class="color-box" style="background:#238636"></span>Original H3 hexagon
+                        cell</div>
+                </div>
+
+                <div class="demo-card">
+                    <h3>Boundary Children <code>children_on_boundary_faces()</code></h3>
+                    <div id="map2" class="map-container"></div>
+                    <div class="legend">
+                        <div><span class="color-box" style="background:#238636"></span>Original Cell</div>
+                        <div><span class="color-box" style="background:#f0883e"></span>Boundary Children (Res 10)</div>
+                    </div>
+                </div>
+
+                <div class="demo-card">
+                    <h3>Merged Boundary <code>cell_boundary_from_children_cpp()</code></h3>
+                    <div id="map3" class="map-container"></div>
+                    <div class="legend">
+                        <div><span class="color-box" style="background:#238636"></span>Original Cell</div>
+                        <div><span class="color-box" style="background:#1f6feb"></span>Merged Boundary</div>
+                    </div>
+                </div>
+
+                <div class="demo-card">
+                    <h3>Buffered Polygon (Accurate) <code>use_convex_hull=False</code></h3>
+                    <div id="map4" class="map-container"></div>
+                    <div class="legend">
+                        <div><span class="color-box" style="background:#238636"></span>Original Cell</div>
+                        <div><span class="color-box" style="background:#f85149"></span>Buffered (Auto margin)</div>
+                    </div>
+                </div>
+
+                <div class="demo-card">
+                    <h3>Buffered Polygon (Fast) <code>use_convex_hull=True</code></h3>
+                    <div id="map5" class="map-container"></div>
+                    <div class="legend">
+                        <div><span class="color-box" style="background:#238636"></span>Original Cell</div>
+                        <div><span class="color-box" style="background:#f85149; opacity: 0.5"></span>Accurate
+                            (Reference)</div>
+                        <div><span class="color-box" style="background:#a371f7"></span>Fast (Convex Hull)</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="demo_data.js?v=2"></script>
+    <script>
+
+        var center = [37.773, -122.418];
+        var tiles = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+
+        // Map 1: Original Cell
+        var map1 = L.map('map1').setView(center, 13);
+        L.tileLayer(tiles).addTo(map1);
+        L.geoJSON(cellBoundary, { style: { color: '#238636', weight: 4, fillOpacity: 0.1 } }).addTo(map1);
+
+        // Map 2: Boundary Children (Loaded from demo_data.js as 'boundaryChildren')
+        var map2 = L.map('map2').setView(center, 13); // Zoom in a bit more
+        L.tileLayer(tiles).addTo(map2);
+        // Add cell outline for reference
+        L.geoJSON(cellBoundary, { style: { color: '#238636', weight: 1, fillOpacity: 0, dashArray: '4' } }).addTo(map2);
+        // Add children cells
+        if (typeof boundaryChildren !== 'undefined') {
+            L.geoJSON(boundaryChildren, { style: { color: '#f0883e', weight: 1, fillOpacity: 0.4 } }).addTo(map2);
+        }
+
+        // Map 3: Merged Boundary (Loaded from demo_data.js as 'mergedBoundary')
+        var map3 = L.map('map3').setView(center, 13);
+        L.tileLayer(tiles).addTo(map3);
+        L.geoJSON(cellBoundary, { style: { color: '#238636', weight: 1, fillOpacity: 0, dashArray: '4' } }).addTo(map3);
+        if (typeof mergedBoundary !== 'undefined') {
+            L.geoJSON(mergedBoundary, { style: { color: '#1f6feb', weight: 3, fillOpacity: 0.3 } }).addTo(map3);
+        }
+
+        // Map 4: Buffered Accurate
+        var map4 = L.map('map4').setView(center, 12);
+        L.tileLayer(tiles).addTo(map4);
+        L.geoJSON(cellBoundary, { style: { color: '#238636', weight: 1, fillOpacity: 0, dashArray: '4' } }).addTo(map4);
+        if (typeof bufferedAccurate !== 'undefined') {
+            L.geoJSON(bufferedAccurate, { style: { color: '#f85149', weight: 3, fillOpacity: 0.3 } }).addTo(map4);
+        }
+
+        // Map 5: Buffered Fast
+        var map5 = L.map('map5').setView(center, 12);
+        L.tileLayer(tiles).addTo(map5);
+        if (typeof bufferedAccurate !== 'undefined') {
+            L.geoJSON(bufferedAccurate, { style: { color: '#f85149', weight: 1, fillOpacity: 0.1, dashArray: '4' } }).addTo(map5);
+        }
+        if (typeof bufferedFast !== 'undefined') {
+            L.geoJSON(bufferedFast, { style: { color: '#a371f7', weight: 3, fillOpacity: 0.3 } }).addTo(map5);
+        }
+    </script>
+</body>
+
+</html>

@@ -70,7 +70,9 @@ def main():
     # Determine output filename
     output_file = args.output
     if not output_file:
-        output_file = f"cell-{args.cell}.osm.pbf"
+        maps_dir = Path("data/maps")
+        maps_dir.mkdir(parents=True, exist_ok=True)
+        output_file = maps_dir / f"cell_{args.cell}.osm.pbf"
 
     logger.info(f"Filtering PBF to {output_file}...")
 

@@ -5,9 +5,11 @@ This module provides exact translations of the C++ algorithms for testing and co
 
 Algorithms:
 - query_classic: Bidirectional Dijkstra with inside filtering only
+- query_classic_alt: Alternative path using penalty method (thread-safe)
 - query_pruned: + H3 resolution-based pruning
 - dijkstra_general: Standard Dijkstra using ALL shortcuts (baseline)
 - expand_path: Expand shortcut path to base edges
+
 
 Usage:
     from cpp_algorithms import *
@@ -306,8 +308,184 @@ def query_classic(source_edge: int, target_edge: int, data: AlgorithmData) -> Qu
 
 
 # =============================================================================
+# ALGORITHM 1-ALT: query_classic_alt (Alternative path using penalty method)
+# =============================================================================
+
+def query_classic_alt(
+    source_edge: int, 
+    target_edge: int, 
+    data: AlgorithmData,
+    penalty_factor: float = 2.0
+) -> Tuple[QueryResult, QueryResult]:
+    """
+    Find shortest path and one alternative path using penalty method.
+    
+    Algorithm:
+    1. Run query_classic to find the shortest path
+    2. Collect edge pairs from the shortest path into a penalty set
+    3. Run bidirectional search again, applying penalty_factor to those edges
+    4. Return both paths (shortest and alternative)
+    
+    Thread-safe: No shared data is modified. Penalties are applied on-the-fly.
+    
+    Args:
+        source_edge: Source edge ID
+        target_edge: Target edge ID  
+        data: Algorithm data structures
+        penalty_factor: Multiplier for edges in shortest path (default: 2.0)
+        
+    Returns:
+        Tuple of (shortest_path_result, alternative_path_result)
+    """
+    # Step 1: Find shortest path using original query_classic
+    shortest_result = query_classic(source_edge, target_edge, data)
+    
+    if not shortest_result.reachable:
+        return shortest_result, QueryResult(-1, [], False)
+    
+    # Step 2: Build penalty set from shortest path edges
+    penalized_pairs: set = set()
+    for i in range(len(shortest_result.path) - 1):
+        u = shortest_result.path[i]
+        v = shortest_result.path[i + 1]
+        penalized_pairs.add((u, v))
+    
+    # Step 3: Run bidirectional search with on-the-fly penalties
+    INF = float('inf')
+    
+    if source_edge == target_edge:
+        return shortest_result, shortest_result
+    
+    dist_fwd: Dict[int, float] = {}
+    dist_bwd: Dict[int, float] = {}
+    parent_fwd: Dict[int, int] = {}
+    parent_bwd: Dict[int, int] = {}
+    pq_fwd: List[Tuple[float, int]] = []
+    pq_bwd: List[Tuple[float, int]] = []
+    
+    dist_fwd[source_edge] = 0.0
+    parent_fwd[source_edge] = source_edge
+    heappush(pq_fwd, (0.0, source_edge))
+    
+    target_cost = get_edge_cost(target_edge, data)
+    dist_bwd[target_edge] = target_cost
+    parent_bwd[target_edge] = target_edge
+    heappush(pq_bwd, (target_cost, target_edge))
+    
+    best = INF
+    meeting = None
+    found = False
+    
+    while pq_fwd or pq_bwd:
+        # Forward step
+        if pq_fwd:
+            d, u = heappop(pq_fwd)
+            
+            if u in dist_fwd and d > dist_fwd[u]:
+                pass
+            elif d >= best:
+                pass
+            else:
+                for sc in data.fwd_adj.get(u, []):
+                    if sc.inside != 1:
+                        continue
+                    
+                    # Apply penalty on-the-fly
+                    effective_cost = sc.cost
+                    if (u, sc.to_edge) in penalized_pairs:
+                        effective_cost = sc.cost * penalty_factor
+                    
+                    nd = d + effective_cost
+                    if sc.to_edge not in dist_fwd or nd < dist_fwd[sc.to_edge]:
+                        dist_fwd[sc.to_edge] = nd
+                        parent_fwd[sc.to_edge] = u
+                        heappush(pq_fwd, (nd, sc.to_edge))
+                        
+                        if sc.to_edge in dist_bwd:
+                            total = nd + dist_bwd[sc.to_edge]
+                            if total < best:
+                                best = total
+                                meeting = sc.to_edge
+                                found = True
+        
+        # Backward step
+        if pq_bwd:
+            d, u = heappop(pq_bwd)
+            
+            if u in dist_bwd and d > dist_bwd[u]:
+                pass
+            elif d >= best:
+                pass
+            else:
+                for sc in data.bwd_adj.get(u, []):
+                    if sc.inside != -1 and sc.inside != 0:
+                        continue
+                    
+                    # Apply penalty on-the-fly (check reverse for bwd search)
+                    effective_cost = sc.cost
+                    if (sc.from_edge, u) in penalized_pairs:
+                        effective_cost = sc.cost * penalty_factor
+                    
+                    nd = d + effective_cost
+                    if sc.from_edge not in dist_bwd or nd < dist_bwd[sc.from_edge]:
+                        dist_bwd[sc.from_edge] = nd
+                        parent_bwd[sc.from_edge] = u
+                        heappush(pq_bwd, (nd, sc.from_edge))
+                        
+                        if sc.from_edge in dist_fwd:
+                            total = dist_fwd[sc.from_edge] + nd
+                            if total < best:
+                                best = total
+                                meeting = sc.from_edge
+                                found = True
+        
+        # Early termination
+        if pq_fwd and pq_bwd:
+            if pq_fwd[0][0] >= best and pq_bwd[0][0] >= best:
+                break
+        elif not pq_fwd and not pq_bwd:
+            break
+    
+    if not found:
+        return shortest_result, QueryResult(-1, [], False)
+    
+    # Reconstruct alternative path
+    path = []
+    curr = meeting
+    
+    while True:
+        path.append(curr)
+        if curr not in parent_fwd or parent_fwd[curr] == curr:
+            break
+        curr = parent_fwd[curr]
+    path.reverse()
+    
+    curr = meeting
+    while True:
+        if curr not in parent_bwd or parent_bwd[curr] == curr:
+            break
+        curr = parent_bwd[curr]
+        path.append(curr)
+    
+    # Calculate TRUE cost of alternative path (without penalties)
+    true_alt_cost = 0.0
+    for i in range(len(path) - 1):
+        u, v = path[i], path[i + 1]
+        for sc in data.fwd_adj.get(u, []):
+            if sc.to_edge == v:
+                true_alt_cost += sc.cost
+                break
+    true_alt_cost += get_edge_cost(target_edge, data)
+    
+    alternative_result = QueryResult(true_alt_cost, path, True)
+    
+    return shortest_result, alternative_result
+
+
+# =============================================================================
 # ALGORITHM 2: query_pruned (C++ lines 400-580)
 # =============================================================================
+
 
 def query_pruned(source_edge: int, target_edge: int, data: AlgorithmData) -> QueryResult:
     """

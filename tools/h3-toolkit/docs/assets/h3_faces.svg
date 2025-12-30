@@ -1,0 +1,29 @@
+<svg viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .hex-bg { fill: #fdfdfd; stroke: #e0e0e0; stroke-width: 1; }
+    .face-line { stroke-width: 6; stroke-linecap: round; }
+    .face-1 { stroke: #e63946; } .face-2 { stroke: #f4a261; } .face-3 { stroke: #e9c46a; }
+    .face-4 { stroke: #2a9d8f; } .face-5 { stroke: #264653; } .face-6 { stroke: #457b9d; }
+    .face-label { font-family: sans-serif; font-size: 16px; font-weight: bold; fill: #333; }
+  </style>
+
+  <polygon points="150,30 253.9,90 253.9,210 150,270 46.1,210 46.1,90" class="hex-bg" />
+
+  <line x1="150" y1="30" x2="253.9" y2="90" class="face-line face-1" />
+  <text x="215" y="55" class="face-label">1</text>
+
+  <line x1="253.9" y1="90" x2="253.9" y2="210" class="face-line face-2" />
+  <text x="270" y="155" class="face-label">2</text>
+
+  <line x1="253.9" y1="210" x2="150" y2="270" class="face-line face-3" />
+  <text x="215" y="255" class="face-label">3</text>
+
+  <line x1="150" y1="270" x2="46.1" y2="210" class="face-line face-4" />
+  <text x="85" y="255" class="face-label">4</text>
+
+  <line x1="46.1" y1="210" x2="46.1" y2="90" class="face-line face-5" />
+  <text x="30" y="155" class="face-label">5</text>
+
+  <line x1="46.1" y1="90" x2="150" y2="30" class="face-line face-6" />
+  <text x="85" y="55" class="face-label">6</text>
+</svg>

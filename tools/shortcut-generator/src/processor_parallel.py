@@ -13,6 +13,16 @@ from multiprocessing import cpu_count
 import duckdb
 import h3
 import pandas as pd
+import os
+import resource
+
+def log_memory(logger_instance, stage: str):
+    """Log current memory usage."""
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Linux returns maxrss in KB
+    mb = usage / 1024
+    logger_instance.info(f"[MEMORY] {stage}: {mb:.2f} MB")
+
 
 import utilities as utils
 from sp_methods.pure import compute_shortest_paths_pure_duckdb
@@ -66,11 +76,12 @@ def process_chunk_phase1(args):
             )
         """)
         
+
         # ... (rest of function unchanged, just returning duration at end)
         
-        # Iterative Forward Pass (15 -> partition_res)
         for res in range(15, partition_res - 1, -1):
             res_start = time.time()
+
             
             _assign_cell_to_shortcuts_worker(con, res, "shortcuts")
             
@@ -722,18 +733,87 @@ class ParallelShortcutProcessor:
             WHERE c != 0
         """)
         chunk_ids = [r[0] for r in self.con.execute("SELECT cell_id FROM chunks").fetchall()]
+        
+        log_memory(logger, "Phase 1: Chunk IDs identified")
+        
         # Load edges once - shared by all workers
         edges_df = self.con.execute("SELECT * FROM edges").df()
         
-        # Prepare args for workers - each gets edges + chunk-specific shortcuts
+        log_memory(logger, f"Phase 1: Edges loaded ({len(edges_df)} rows)")
+
+        
+        # Prepare args for workers - vectorized approach
+        log_memory(logger, "Phase 1: Fetching all shortcuts for vectorization")
+        
+        # 1. Fetch all shortcuts with necessary columns
+        all_shortcuts_df = self.con.execute(f"""
+            SELECT *, 
+                   h3_parent(inner_cell, {self.partition_res}) as inner_parent,
+                   h3_parent(outer_cell, {self.partition_res}) as outer_parent
+            FROM {self.elementary_table}
+        """).df()
+        
+        log_memory(logger, f"Phase 1: All shortcuts fetched ({len(all_shortcuts_df)} rows)")
+        
+        # 2. Group by parents
+        # We need shortcuts where inner_parent == chunk_id OR outer_parent == chunk_id
+        
+        # Create a mapping of chunk_id -> list of indices
+        from collections import defaultdict
+        chunk_indices = defaultdict(list)
+        
+        # Inner parents
+        for chunk_id, group_indices in all_shortcuts_df.groupby('inner_parent').groups.items():
+            if chunk_id != 0: # Filter global
+                chunk_indices[chunk_id].extend(group_indices)
+                
+        # Outer parents (only if differs from inner to avoid duplicates if we just concat)
+        # Actually, simpler approach:
+        # For each chunk, we mask the DF. But that is O(N * C).
+        # Better: 
+        # inner_groups = all_shortcuts_df.groupby('inner_parent')
+        # outer_groups = all_shortcuts_df.groupby('outer_parent')
+        
+        # Optimal: Pre-calculate indices for each chunk
+        # Re-using the groups approach
+        
         args_list = []
+        
+        # Convert to more efficient lookup if needed, but simple group iteration is fast
+        # Let's iterate over the known chunks
+        
+        inner_groups = all_shortcuts_df.groupby('inner_parent')
+        outer_groups = all_shortcuts_df.groupby('outer_parent')
+        
         for chunk_id in chunk_ids:
-            shortcuts_df = self.con.execute(f"""
-                SELECT * FROM {self.elementary_table}
-                WHERE h3_parent(inner_cell, {self.partition_res}) = {chunk_id}
-                   OR h3_parent(outer_cell, {self.partition_res}) = {chunk_id}
-            """).df()
-            args_list.append((chunk_id, edges_df, shortcuts_df, self.partition_res, self.sp_method, self.hybrid_res))
+            parts = []
+            if chunk_id in inner_groups.groups:
+                parts.append(inner_groups.get_group(chunk_id))
+            
+            if chunk_id in outer_groups.groups:
+                # We need to be careful not to duplicate if inner_parent == outer_parent == chunk_id
+                # The query was: inner_parent = id OR outer_parent = id
+                
+                # If we get the outer group, we should filter out those where inner_parent also equals chunk_id
+                # to avoid double counting if we blindly concatenated.
+                # However, get_group returns a view/copy.
+                
+                outer_part = outer_groups.get_group(chunk_id)
+                # Only include rows where inner_parent != chunk_id (since those are already in parts[0])
+                outer_part = outer_part[outer_part['inner_parent'] != chunk_id]
+                
+                if not outer_part.empty:
+                    parts.append(outer_part)
+            
+            if parts:
+                shortcuts_df = pd.concat(parts)
+                # Drop helper columns to match expected schema
+                shortcuts_df = shortcuts_df.drop(columns=['inner_parent', 'outer_parent'])
+                args_list.append((chunk_id, edges_df, shortcuts_df, self.partition_res, self.sp_method, self.hybrid_res))
+
+        
+        log_memory(logger, f"Phase 1: Args prepared for {len(chunk_ids)} chunks")
+
         
         res_partition_cells = []
         total_deactivated = 0
@@ -765,6 +845,11 @@ class ParallelShortcutProcessor:
                         total_deactivated += len(deactivated_df)
                     
                     logger.info(f"  [{i}/{len(chunk_ids)}] Chunk {chunk_id} complete in {duration:.2f}s. {count} active, {len(deactivated_df) if deactivated_df is not None else 0} deactivated")
+                    
+                    # Memory cleanup after each worker
+                    del active_df, deactivated_df
+                    gc.collect()
+
         else:
             logger.info(f"  Processing {len(chunk_ids)} chunks sequentially...")
             for i, args in enumerate(args_list, 1):
@@ -784,6 +869,11 @@ class ParallelShortcutProcessor:
                     total_deactivated += len(deactivated_df)
                 
                 logger.info(f"  [{i}/{len(chunk_ids)}] Chunk {chunk_id} complete in {duration:.2f}s. {count} active, {len(deactivated_df) if deactivated_df is not None else 0} deactivated")
+                
+                # Memory cleanup after each worker
+                del active_df, deactivated_df
+                gc.collect()
+
         
         # Log PURE vs SCIPY timing summary
         if all_timing_info:
@@ -795,6 +885,11 @@ class ParallelShortcutProcessor:
                 logger.info(f"  SCIPY timing: {len(scipy_times)} calls, total {sum(scipy_times):.1f}s, avg {sum(scipy_times)/len(scipy_times):.2f}s")
         
         logger.info(f"  Total deactivated from Phase 1: {total_deactivated}")
+        
+        # Clean up large DataFrames
+        del edges_df, all_shortcuts_df, args_list
+        gc.collect()
+        
         self.current_cells = res_partition_cells
         return res_partition_cells
 
@@ -866,10 +961,10 @@ class ParallelShortcutProcessor:
                 
                 logger.info(f"    Parent {parent_id}: {len(valid_children)} children, {merged_count} merged -> {active} active -> {news} pool, {decs} deactivated ({format_time(time.time() - cell_start)})")
             
-            # 3. Clean up generic temp tables
             self.con.execute("DROP TABLE IF EXISTS shortcuts_active")
             self.con.execute("DROP TABLE IF EXISTS shortcuts_next")
             self.checkpoint()
+            gc.collect()  # Memory cleanup after each resolution
             
             self.current_cells = list(set(new_cells))
             logger.info(f"  Res {target_res} complete in {format_time(time.time() - res_start)}. Active cells: {len(self.current_cells)}, Deactivated: {self.con.sql(f'SELECT count(*) FROM {self.forward_deactivated_table}').fetchone()[0]}")
@@ -884,23 +979,33 @@ class ParallelShortcutProcessor:
         
         total_forward = self.con.sql(f"SELECT count(*) FROM {self.forward_deactivated_table}").fetchone()[0]
         
-        # Deduplicate the deactivated table
+        # Stream dedup directly to Parquet (no temp table in memory)
+        parquet_path = str(Path(self.db_path).parent / "forward_deactivated.parquet")
         self.con.execute(f"""
-            CREATE OR REPLACE TABLE {self.forward_deactivated_table}_dedup AS
-            SELECT 
-                from_edge, to_edge, MIN(cost) as cost, arg_min(via_edge, cost) as via_edge,
-                FIRST(lca_res) as lca_res, FIRST(inner_cell) as inner_cell, FIRST(outer_cell) as outer_cell, FIRST(inner_res) as inner_res, FIRST(outer_res) as outer_res
-            FROM {self.forward_deactivated_table}
-            GROUP BY from_edge, to_edge
+            COPY (
+                SELECT 
+                    from_edge, to_edge, MIN(cost) as cost, arg_min(via_edge, cost) as via_edge,
+                    FIRST(lca_res) as lca_res, FIRST(inner_cell) as inner_cell, FIRST(outer_cell) as outer_cell, 
+                    FIRST(inner_res) as inner_res, FIRST(outer_res) as outer_res
+                FROM {self.forward_deactivated_table}
+                GROUP BY from_edge, to_edge
+            ) TO '{parquet_path}' (FORMAT PARQUET)
         """)
+        
+        # Get dedup count from parquet metadata
+        dedup_count = self.con.execute(f"SELECT count(*) FROM '{parquet_path}'").fetchone()[0]
+        
+        # Drop table after export (Parquet serves as backup)
         self.con.execute(f"DROP TABLE {self.forward_deactivated_table}")
-        self.con.execute(f"ALTER TABLE {self.forward_deactivated_table}_dedup RENAME TO {self.forward_deactivated_table}")
-        dedup_count = self.con.sql(f"SELECT count(*) FROM {self.forward_deactivated_table}").fetchone()[0]
+        
+        # Re-create table from Parquet for Phase 3 compatibility
+        self.con.execute(f"CREATE TABLE {self.forward_deactivated_table} AS SELECT * FROM '{parquet_path}'")
         
         logger.info("--------------------------------------------------")
         logger.info(f"  Remaining active at Res -1: {remaining_active}")
         logger.info(f"  Total deactivated (before dedup): {total_forward}")  
         logger.info(f"  Deduplicated forward results: {dedup_count}")
+        logger.info(f"  Saved to: {parquet_path}")
         
         return dedup_count
 
@@ -913,15 +1018,12 @@ class ParallelShortcutProcessor:
         # Load edges once - shared by all workers
         edges_df = self.con.execute("SELECT * FROM edges").df()
         
-        # Prepare args - each worker gets edges + cell data
-        args_list = []
-        total_shortcuts = 0
+        # Count total shortcuts (without loading into memory)
         cell_ids = self.current_cells
-        for cell_id in cell_ids:
-            cell_df = self.con.execute(f"SELECT * FROM cell_{cell_id}").df()
-            if len(cell_df) > 0:
-                args_list.append((cell_id, edges_df, cell_df, self.partition_res, self.sp_method, self.hybrid_res))
-                total_shortcuts += len(cell_df)
+        total_shortcuts = sum(
+            self.con.execute(f"SELECT count(*) FROM cell_{cell_id}").fetchone()[0]
+            for cell_id in cell_ids
+        )
         
         total_deactivated = self.con.execute(f"SELECT count(*) FROM {self.backward_deactivated_table}").fetchone()[0]
         all_timing_info = []  # Collect timing from all workers
@@ -931,7 +1033,14 @@ class ParallelShortcutProcessor:
         if num_workers > 1:
             logger.info(f"  Starting with {len(cell_ids)} cells ({total_shortcuts} shortcuts), max {num_workers} workers...")
             with ProcessPoolExecutor(max_workers=num_workers) as executor:
-                futures = {executor.submit(process_chunk_phase4, args): args[0] for args in args_list}
+                # Submit futures incrementally - load cell data only when submitting
+                futures = {}
+                for cell_id in cell_ids:
+                    cell_df = self.con.execute(f"SELECT * FROM cell_{cell_id}").df()
+                    if len(cell_df) > 0:
+                        future = executor.submit(process_chunk_phase4, (cell_id, edges_df, cell_df, self.partition_res, self.sp_method, self.hybrid_res))
+                        futures[future] = cell_id
+                    del cell_df  # Free immediately after submit
                 
                 for i, future in enumerate(as_completed(futures), 1):
                     cell_id, result_df, count, timing_info, duration = future.result()
@@ -948,11 +1057,18 @@ class ParallelShortcutProcessor:
                     
                     # Drop cell table and cleanup memory
                     self.con.execute(f"DROP TABLE IF EXISTS cell_{cell_id}")
+                    del result_df
                     gc.collect()  # Per-cell memory cleanup
-                    logger.info(f"  [{i}/{len(cell_ids)}] Cell {cell_id} complete in {duration:.2f}s: {count} shortcuts, total: {total_deactivated}")
+                    logger.info(f"  [{i}/{len(futures)}] Cell {cell_id} complete in {duration:.2f}s: {count} shortcuts, total: {total_deactivated}")
         else:
             logger.info(f"  Starting with {len(cell_ids)} cells ({total_shortcuts} shortcuts) sequentially...")
-            for i, args in enumerate(args_list, 1):
+            for i, cell_id in enumerate(cell_ids, 1):
+                cell_df = self.con.execute(f"SELECT * FROM cell_{cell_id}").df()
+                if len(cell_df) == 0:
+                    continue
+                args = (cell_id, edges_df, cell_df, self.partition_res, self.sp_method, self.hybrid_res)
+                del cell_df  # Free before calling worker
+                
                 cell_id, result_df, count, timing_info, duration = process_chunk_phase4(args)
                 all_timing_info.extend(timing_info)
                 
@@ -967,6 +1083,7 @@ class ParallelShortcutProcessor:
                 
                 # Drop cell table and cleanup memory
                 self.con.execute(f"DROP TABLE IF EXISTS cell_{cell_id}")
+                del result_df
                 gc.collect()  # Per-cell memory cleanup
                 logger.info(f"  [{i}/{len(cell_ids)}] Cell {cell_id} complete in {duration:.2f}s: {count} shortcuts, total: {total_deactivated}")
         
@@ -1392,18 +1509,16 @@ class ParallelShortcutProcessor:
         
         phase3_start = time.time()
         
-        # Load forward deactivated shortcuts into cell_0 (global cell)
+        # Rename forward_deactivated to cell_0 (instant, no copy)
         t_load = time.time()
-        self.con.execute(f"""
-            CREATE OR REPLACE TABLE cell_0 AS
-            SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, inner_res, outer_res
-            FROM {self.forward_deactivated_table}
-        """)
+        forward_count = self.con.sql(f"SELECT count(*) FROM {self.forward_deactivated_table}").fetchone()[0]
+        # Drop cell_0 if it exists from a previous interrupted run
+        self.con.execute("DROP TABLE IF EXISTS cell_0")
+        self.con.execute(f"ALTER TABLE {self.forward_deactivated_table} RENAME TO cell_0")
         t_load = time.time() - t_load
         
-        forward_count = self.con.sql("SELECT count(*) FROM cell_0").fetchone()[0]
         self.current_cells = [0]
-        logger.info(f"  Loaded {forward_count} shortcuts from forward pass. [{t_load:.2f}s]")
+        logger.info(f"  Renamed {self.forward_deactivated_table} to cell_0 ({forward_count} shortcuts). [{t_load:.2f}s]")
         
         if forward_count == 0:
             logger.warning("  No shortcuts to process in Phase 3.")
@@ -1464,7 +1579,11 @@ class ParallelShortcutProcessor:
             total_deactivated = self.con.sql(f"SELECT count(*) FROM {self.backward_deactivated_table}").fetchone()[0]
             
             logger.info(f"  Res {res}: {remaining} -> {active_count} active -> {after_count} pool [deact={t_deact:.2f}s, assign={t_assign:.2f}s, SP={t_sp:.2f}s]")
-                
+            
+            # Memory cleanup after each resolution
+            self.checkpoint()
+            gc.collect()
+
         # Final deactivation at partition_res boundary
         t_final_deact = time.time()
         deactivated_count = self.con.execute(f"""

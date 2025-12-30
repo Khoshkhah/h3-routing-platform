@@ -1,0 +1,49 @@
+# Default configuration for shortcut generation
+# ============================================
+# This file defines the default settings. Copy and modify for custom runs.
+
+# Path Configuration (Base Directories)
+paths:
+  # project_root is auto-detected, or set via H3_ROUTING_ROOT env var
+  osm_importer: "{project_root}/tools/osm-importer"
+  data_output: "{project_root}/data"
+  boundaries: "{osm_importer}/data/boundaries"
+  input_data: "{osm_importer}/data/output"
+
+# Input Configuration
+input:
+  edges_file: "{input_data}/{district}/{district}_driving_simplified_edges_with_h3.csv"
+  graph_file: "{input_data}/{district}/{district}_driving_edge_graph.csv"
+  boundary_file: "{boundaries}/{district}.geojson"
+  district: "cell_832b02fffffffff"
+
+# Output Configuration
+output:
+  directory: "{data_output}"
+  shortcuts_file: "{district}_shortcuts"
+  persist_dir: "{data_output}"  # DuckDB files go here
+
+# Algorithm Configuration
+algorithm:
+  name: "partitioned"  # Options: "partitioned", "hybrid", "pure", "scipy"
+  sp_method: "SCIPY"   # Options: "SCIPY", "PURE", "HYBRID"
+  hybrid_res: 10       # For HYBRID: PURE for res >= hybrid_res, SCIPY for res < hybrid_res
+  partition_res: 7     # Resolution for Phase 1 chunking
+  min_res: 0           # Minimum H3 resolution
+  max_res: 15          # Maximum H3 resolution
+
+# DuckDB Configuration
+duckdb:
+  memory_limit: "12GB"
+  threads: null        # null = auto-detect
+  fresh_start: true   # If true, delete existing DB before running, or continue from existing DB from phase 3
+
+# Parallel Execution Configuration
+parallel:
+  workers: 1           # 1 = single-threaded, >1 = parallel with N workers
+  workers_phase1: 10   # Override for Phase 1
+  workers_phase4: 2    # Override for Phase 4
+# Logging Configuration
+logging:
+  level: "INFO"        # Options: "INFO", "DEBUG", "WARNING", "ERROR"
+  verbose: true        # If true, print more verbose output

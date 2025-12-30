@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "h3_toolkit"
+version = "0.1.0"
+description = "Advanced H3 utility functions in Python and C++"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "h3>=3.7.0",
+    "shapely>=2.0.0",
+    "geojson>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "black",
+    "mypy"
+]
+
+[tool.setuptools.packages.find]
+where = ["src/python"]
