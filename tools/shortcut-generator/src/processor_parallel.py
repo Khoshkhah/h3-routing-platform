@@ -170,17 +170,30 @@ def process_chunk_phase4(args):
     result_path = f"{temp_dir}/phase4_result_{cell_id}.parquet"
     
     try:
-        # Worker uses in-memory DuckDB for processing
-        con = duckdb.connect(":memory:")
+        # Worker uses disk-backed DuckDB (spills to disk, manages memory)
+        worker_db_path = f"{temp_dir}/worker_{cell_id}.db"
+        con = duckdb.connect(worker_db_path)
         
         # Register H3 UDFs
         con.create_function("h3_lca", utils._find_lca_impl, ["BIGINT", "BIGINT"], "BIGINT")
         con.create_function("h3_resolution", utils._find_resolution_impl, ["BIGINT"], "INTEGER")
         con.create_function("h3_parent", utils._get_parent_cell_impl, ["BIGINT", "INTEGER"], "BIGINT")
         
-        # Load data directly from Parquet files (no DB connection needed)
-        con.execute(f"CREATE TABLE edges AS SELECT * FROM '{edges_parquet_path}'")
-        con.execute(f"CREATE TABLE cell_data AS SELECT * FROM '{cell_parquet_path}'")
+        # Use a VIEW for cell data to stream from Parquet instead of loading everything
+        # This prevents the initial memory/disk spike of materializing the table
+        con.execute(f"CREATE VIEW cell_data AS SELECT * FROM '{cell_parquet_path}'")
+        
+        # We still materialize edges (filtered) as they are accessed repeatedly in JOINs
+        # and are relatively small (~50-100K)
+        con.execute(f"""
+            CREATE TABLE edges AS 
+            SELECT * FROM '{edges_parquet_path}'
+            WHERE id IN (
+                SELECT DISTINCT from_edge FROM cell_data
+                UNION
+                SELECT DISTINCT to_edge FROM cell_data
+            )
+        """)
         
         initial_count = con.execute("SELECT count(*) FROM cell_data").fetchone()[0]
         if initial_count == 0:
@@ -208,11 +221,23 @@ def process_chunk_phase4(args):
             """)
             
             # Keep only shortcuts that can still be refined
+            # We use a temp table + rename because cell_data starts as a VIEW, 
+            # and DuckDB's CREATE OR REPLACE TABLE doesn't replace VIEWs.
             con.execute(f"""
-                CREATE OR REPLACE TABLE cell_data AS
+                CREATE TABLE cell_data_next AS
                 SELECT * FROM cell_data
                 WHERE {res} <= GREATEST(inner_res, outer_res)
             """)
+            
+            # Robust drop: Check type from information_schema to avoid Catalog Errors
+            res_type = con.execute("SELECT table_type FROM information_schema.tables WHERE table_name = 'cell_data'").fetchone()
+            if res_type:
+                if res_type[0] == 'VIEW':
+                    con.execute("DROP VIEW cell_data")
+                else:
+                    con.execute("DROP TABLE cell_data")
+                    
+            con.execute("ALTER TABLE cell_data_next RENAME TO cell_data")
             
             remaining = con.execute("SELECT count(*) FROM cell_data").fetchone()[0]
             if remaining == 0:
@@ -250,11 +275,16 @@ def process_chunk_phase4(args):
             result_path = None
         
         con.close()
+        # Cleanup worker DB file
+        Path(worker_db_path).unlink(missing_ok=True)
         return (cell_id, result_path, final_count, timing_info, time.time() - start_time)
     
     except Exception as e:
         import traceback
         traceback.print_exc()
+        # Cleanup on error
+        if 'worker_db_path' in locals():
+            Path(worker_db_path).unlink(missing_ok=True)
         return (cell_id, None, 0, [], time.time() - start_time)
 
 
@@ -496,49 +526,35 @@ def _run_shortest_paths_worker(con, input_table: str, method: str = "SCIPY", num
         con.execute("CREATE OR REPLACE TABLE shortcuts_next AS SELECT * FROM sp_input")
         con.execute("ALTER TABLE shortcuts_next DROP COLUMN current_cell")
     else:
-        # SCIPY method
-        df = con.execute("SELECT * FROM sp_input").df()
+        # BATCHED SCIPY: Process cells one at a time to avoid loading all data into RAM
+        cells = [r[0] for r in con.execute("SELECT DISTINCT current_cell FROM sp_input WHERE current_cell IS NOT NULL").fetchall()]
         
-        if df.empty:
-            con.execute(f"CREATE OR REPLACE TABLE shortcuts_next AS SELECT * FROM sp_input WHERE 1=0")
-            return
+        # Create empty result table
+        con.execute("""
+            CREATE OR REPLACE TABLE shortcuts_next (
+                from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER
+            )
+        """)
+        
+        # Process each cell separately
+        for cell in cells:
+            cell_df = con.execute(f"SELECT * FROM sp_input WHERE current_cell = {cell}").df()
             
-        partitions = list(df.groupby('current_cell'))
-        results = []
-        
-        if num_workers > 1 and len(partitions) > 1:
-            # Parallel processing of partitions
-            # Flatten partitions to just the DataFrames for simplicity
-            groups = [group for cell, group in partitions]
-            with ProcessPoolExecutor(max_workers=num_workers) as executor:
-                processed_groups = list(executor.map(process_partition_scipy, groups))
+            if len(cell_df) > 0:
+                processed = process_partition_scipy(cell_df)
+                if not processed.empty:
+                    con.execute("INSERT INTO shortcuts_next SELECT from_edge, to_edge, cost, via_edge FROM processed")
             
-            for (cell, _), processed in zip(partitions, processed_groups):
-                if not processed.empty:
-                    processed['current_cell'] = cell
-                    results.append(processed)
-        else:
-            # Sequential processing
-            for cell, group in partitions:
-                processed = process_partition_scipy(group)
-                if not processed.empty:
-                    processed['current_cell'] = cell
-                    results.append(processed)
+            del cell_df
         
-        if results:
-            final_df = pd.concat(results, ignore_index=True)
-            # Remove current_cell before deduplication to treat all cells as one pool
-            if 'current_cell' in final_df.columns:
-                final_df = final_df.drop(columns=['current_cell'])
-            # Deduplicate
-            idx = final_df.groupby(['from_edge', 'to_edge'])['cost'].idxmin()
-            final_df = final_df.loc[idx]
-            con.execute("""
-                CREATE OR REPLACE TABLE shortcuts_next AS 
-                SELECT from_edge, to_edge, cost, via_edge FROM final_df
-            """)
-        else:
-            con.execute(f"CREATE OR REPLACE TABLE shortcuts_next AS SELECT * FROM sp_input WHERE 1=0")
+        # Final deduplication across all cells
+        con.execute("""
+            CREATE OR REPLACE TABLE shortcuts_next AS
+            SELECT from_edge, to_edge, MIN(cost) as cost, 
+                   arg_min(via_edge, cost) as via_edge
+            FROM shortcuts_next
+            GROUP BY from_edge, to_edge
+        """)
     
     # Re-enrich
     table_exists = con.execute("SELECT count(*) FROM information_schema.tables WHERE table_name = 'shortcuts_next'").fetchone()[0] > 0
@@ -764,6 +780,11 @@ class ParallelShortcutProcessor:
                     if chunk_id in chunk_parquet_files and Path(chunk_parquet_files[chunk_id]).exists():
                         Path(chunk_parquet_files[chunk_id]).unlink()
                     
+                    # Batch checkpoint and memory cleanup
+                    if i % 10 == 0:
+                        self.checkpoint()
+                        gc.collect()
+                    
                     logger.info(f"  [{i}/{len(chunk_ids)}] Chunk {chunk_id} complete in {duration:.2f}s. {count} active")
         else:
             logger.info(f"  Processing {len(chunk_ids)} chunks sequentially...")
@@ -794,7 +815,16 @@ class ParallelShortcutProcessor:
                 if Path(chunk_parquet_files[chunk_id]).exists():
                     Path(chunk_parquet_files[chunk_id]).unlink()
                 
+                # Batch checkpoint and memory cleanup
+                if i % 10 == 0:
+                    self.checkpoint()
+                    gc.collect()
+                
                 logger.info(f"  [{i}/{len(chunk_ids)}] Chunk {chunk_id} complete in {duration:.2f}s. {count} active")
+        
+        # Final checkpoint before cleanup
+        self.checkpoint()
+        gc.collect()
         
         # Cleanup temp directory
         import shutil
@@ -919,12 +949,6 @@ class ParallelShortcutProcessor:
         
         # Get dedup count from parquet metadata
         dedup_count = self.con.execute(f"SELECT count(*) FROM '{parquet_path}'").fetchone()[0]
-        
-        # Drop table after export (Parquet serves as backup)
-        self.con.execute(f"DROP TABLE {self.forward_deactivated_table}")
-        
-        # Re-create table from Parquet for Phase 3 compatibility
-        self.con.execute(f"CREATE TABLE {self.forward_deactivated_table} AS SELECT * FROM '{parquet_path}'")
         
         logger.info("--------------------------------------------------")
         logger.info(f"  Remaining active at Res -1: {remaining_active}")
@@ -1291,24 +1315,40 @@ class ParallelShortcutProcessor:
             compute_shortest_paths_pure_duckdb(self.con, quiet=quiet, input_table="sp_input")
             self.con.execute("CREATE OR REPLACE TABLE shortcuts_next AS SELECT * FROM sp_input")
         elif method == "SCIPY":
-            df = self.con.sql("SELECT * FROM sp_input").df()
-            results = []
-            for cell, group in df.groupby('current_cell'):
-                processed = process_partition_scipy(group)
-                if not processed.empty:
-                    processed['current_cell'] = cell
-                    results.append(processed)
+            # BATCHED SCIPY: Process cells one at a time to avoid loading all data into RAM
+            # Get list of distinct cells
+            cells = [r[0] for r in self.con.execute("SELECT DISTINCT current_cell FROM sp_input WHERE current_cell IS NOT NULL").fetchall()]
             
-            if results:
-                final_df = pd.concat(results, ignore_index=True)
-                # Remove current_cell before deduplication to treat all cells as one pool
-                if 'current_cell' in final_df.columns:
-                    final_df = final_df.drop(columns=['current_cell'])
-                idx = final_df.groupby(['from_edge', 'to_edge'])['cost'].idxmin()
-                final_df = final_df.loc[idx]
-                self.con.execute("CREATE OR REPLACE TABLE shortcuts_next AS SELECT from_edge, to_edge, cost, via_edge FROM final_df")
-            else:
-                self.con.execute(f"CREATE OR REPLACE TABLE shortcuts_next AS SELECT * FROM sp_input WHERE 1=0")
+            # Create empty result table
+            self.con.execute("""
+                CREATE OR REPLACE TABLE shortcuts_next (
+                    from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER
+                )
+            """)
+            
+            # Process each cell separately
+            for cell in cells:
+                # Load only this cell's shortcuts into pandas
+                cell_df = self.con.execute(f"SELECT * FROM sp_input WHERE current_cell = {cell}").df()
+                
+                if len(cell_df) > 0:
+                    processed = process_partition_scipy(cell_df)
+                    if not processed.empty:
+                        # Insert results back to DuckDB
+                        self.con.execute("INSERT INTO shortcuts_next SELECT from_edge, to_edge, cost, via_edge FROM processed")
+                
+                # Clear memory after each cell
+                del cell_df
+                gc.collect()
+            
+            # Final deduplication across all cells
+            self.con.execute("""
+                CREATE OR REPLACE TABLE shortcuts_next AS
+                SELECT from_edge, to_edge, MIN(cost) as cost, 
+                       arg_min(via_edge, cost) as via_edge
+                FROM shortcuts_next
+                GROUP BY from_edge, to_edge
+            """)
 
         table_exists = self.con.sql("SELECT count(*) FROM information_schema.tables WHERE table_name = 'shortcuts_next'").fetchone()[0] > 0
         if table_exists:
@@ -1469,16 +1509,37 @@ class ParallelShortcutProcessor:
         
         phase3_start = time.time()
         
-        # Rename forward_deactivated to cell_0 (instant, no copy)
+        # Create cell_0 from forward_deactivated
+        # Optimization: If it's a table (fresh start), RENAME it (zero cost).
+        # If it's a view (resume), load it (necessary cost).
         t_load = time.time()
         forward_count = self.con.sql(f"SELECT count(*) FROM {self.forward_deactivated_table}").fetchone()[0]
-        # Drop cell_0 if it exists from a previous interrupted run
+        
+        # Check if it's a view or a table
+        res = self.con.execute(f"""
+            SELECT table_type 
+            FROM information_schema.tables 
+            WHERE table_name = '{self.forward_deactivated_table}'
+        """).fetchone()
+        
+        table_type = res[0] if res else 'VIEW' # Default to VIEW if missing (maybe dropped but parquet exists)
+        
         self.con.execute("DROP TABLE IF EXISTS cell_0")
-        self.con.execute(f"ALTER TABLE {self.forward_deactivated_table} RENAME TO cell_0")
+        
+        if table_type == 'VIEW':
+            logger.info(f"  {self.forward_deactivated_table} is a VIEW. Loading to cell_0 (materializing from Parquet)...")
+            # If the view doesn't exist, this will error later, which is fine as it's a fatal error anyway.
+            self.con.execute(f"CREATE TABLE cell_0 AS SELECT * FROM {self.forward_deactivated_table}")
+            # Drop the view since we have the data in cell_0
+            self.con.execute(f"DROP VIEW IF EXISTS {self.forward_deactivated_table}")
+        else:
+            logger.info(f"  {self.forward_deactivated_table} is a TABLE. Renaming to cell_0 (instant)...")
+            self.con.execute(f"ALTER TABLE {self.forward_deactivated_table} RENAME TO cell_0")
+            
         t_load = time.time() - t_load
         
         self.current_cells = [0]
-        logger.info(f"  Renamed {self.forward_deactivated_table} to cell_0 ({forward_count} shortcuts). [{t_load:.2f}s]")
+        logger.info(f"  Initialized cell_0 from {self.forward_deactivated_table} ({forward_count:,} shortcuts). [{t_load:.2f}s]")
         
         if forward_count == 0:
             logger.warning("  No shortcuts to process in Phase 3.")
@@ -1528,7 +1589,7 @@ class ParallelShortcutProcessor:
             t_assign = time.time() - t_assign
             total_assign_time += t_assign
             
-            # Determine method and run SP
+            # Determine method and run SP (SCIPY is now batched, memory-safe)
             method = self.get_sp_method_for_resolution(res, is_forward=False)
             t_sp = time.time()
             active_count, new_count, _ = self.process_cell_backward("cell_0", method=method)

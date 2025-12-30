@@ -168,10 +168,11 @@ def run_partitioned_parallel(cfg):
         if forward_count > 0:
             logger.info(f"Resuming: forward_deactivated table has {forward_count:,} rows. Skipping Phase 1 & 2.")
         elif parquet_path.exists():
-            logger.info(f"Resuming: Found {parquet_path}. Loading and skipping Phase 1 & 2.")
-            # Drop existing empty table if it exists, then create from parquet
+            logger.info(f"Resuming: Found {parquet_path}. Creating view (not loading to memory).")
+            # Create VIEW instead of TABLE to avoid loading entire file into memory
             processor.con.execute("DROP TABLE IF EXISTS forward_deactivated")
-            processor.con.execute(f"CREATE TABLE forward_deactivated AS SELECT * FROM '{parquet_path}'")
+            processor.con.execute("DROP VIEW IF EXISTS forward_deactivated")
+            processor.con.execute(f"CREATE VIEW forward_deactivated AS SELECT * FROM '{parquet_path}'")
         # Clear backward_deactivated for fresh Phase 3
         processor.con.execute("DELETE FROM backward_deactivated")
         res_partition_cells = []  # Not needed for Phase 3
