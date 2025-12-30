@@ -15,6 +15,7 @@ class RouteResponse:
     path: List[int] = None
     geojson: Dict = None
     error: str = None
+    alternative_route: Dict = None  # Alternative route if requested
 
     @property
     def cost(self) -> float:
@@ -134,7 +135,9 @@ class RoutingClient:
         end_lat: float, end_lng: float,
         mode: str = "knn",
         num_candidates: int = 3,
-        algorithm: str = "pruned"
+        algorithm: str = "pruned",
+        include_alternative: bool = False,
+        penalty_factor: float = 2.0
     ) -> RouteResponse:
         """
         Calculate a route between two points.
@@ -147,6 +150,8 @@ class RoutingClient:
             num_candidates: Number of nearest edges to consider per point
             algorithm: Routing algorithm (e.g., "bi_classic_sp", "bi_dijkstra_sp", "bi_lca_res_sp", 
                        "bi_lca_sp", "uni_lca_sp", "m2m_classic_sp", "dijkstra_sp")
+            include_alternative: If True, also return an alternative route
+            penalty_factor: Penalty multiplier for alternative route (default 2.0)
 
         Returns:
             RouteResponse object containing:
@@ -154,6 +159,7 @@ class RoutingClient:
                 - distance_meters: Physical length in meters
                 - path: List of edge IDs
                 - geojson: Route geometry
+                - alternative_route: Dict with alternative route info (if requested)
         """
         # API Gateway (Project OSRM style)
         if self.is_gateway:
@@ -192,7 +198,9 @@ class RoutingClient:
                 "end_lat": end_lat, "end_lng": end_lng,
                 "mode": mode,
                 "num_candidates": num_candidates,
-                "algorithm": algorithm
+                "algorithm": algorithm,
+                "include_alternative": include_alternative,
+                "penalty_factor": penalty_factor
             }
             
             try:
@@ -209,7 +217,8 @@ class RoutingClient:
                     distance_meters=r.get("distance_meters"),
                     runtime_ms=data.get("timing_breakdown", {}).get("total_ms", 0),
                     path=r.get("path"),
-                    geojson=r.get("geojson")
+                    geojson=r.get("geojson"),
+                    alternative_route=data.get("alternative_route")
                 )
             except Exception as e:
                 return RouteResponse(success=False, error=str(e))

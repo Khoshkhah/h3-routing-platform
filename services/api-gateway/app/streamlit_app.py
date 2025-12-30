@@ -290,7 +290,18 @@ html_code = f"""
                     Show Debug Cells (H3)
                 </label>
             </div>
+            <div style="padding: 10px; border-top: 1px solid #ddd;">
+                <label style="font-size: 13px; color: #333; display: flex; align-items: center; cursor: pointer;">
+                    <input type="checkbox" id="include-alternative" style="margin-right: 8px;">
+                    Show Alternative Route
+                </label>
+            </div>
+            <div style="padding: 10px; border-top: 1px solid #ddd;" id="penalty-container">
+                <label style="font-size: 12px; color: #666; display: block; margin-bottom: 5px;">Penalty Factor: <span id="penalty-value">2.0</span></label>
+                <input type="range" id="penalty-factor" min="1.1" max="5.0" step="0.1" value="2.0" style="width: 100%;">
+            </div>
         </div>
+
         <div class="results" id="results-area">
             <div class="stat-card">
                 <div class="stat-time" id="disp-time">0 min</div>
@@ -365,6 +376,7 @@ html_code = f"""
         var markerB = L.marker([49.24, -122.95], {{ icon: iconB, draggable: true }}).addTo(map);
         
         var routeLayer = null;
+        var altRouteLayer = null;
         var debugLayer = L.layerGroup().addTo(map);
         
         // --- 3. API FUNCTION ---
@@ -390,37 +402,61 @@ html_code = f"""
             
             const searchRadius = 2000; // Hardcoded default
             const numCandidates = document.getElementById('num-candidates').value;
-
-            // Prepare query parameters for routing-pipeline Python API (GET)
-            const params = new URLSearchParams({{
-                dataset: dataset,
-                source_lat: latA,
-                source_lon: lonA,
-                target_lat: latB,
-                target_lon: lonB,
-                search_radius: searchRadius,
-                num_candidates: numCandidates,
-                search_mode: searchModeNorm,
-                algorithm: algorithm
-            }});
+            const includeAlternative = document.getElementById('include-alternative').checked;
+            const penaltyFactor = parseFloat(document.getElementById('penalty-factor').value);
 
             try {{
                 // Determine API URL dynamically using helper
                 const apiBase = getApiBase();
-                const url = `${{apiBase}}/route?${{params.toString()}}`;
                 
-                console.log("Fetching route from:", url);
-
-                const response = await fetch(url, {{
-                    method: 'GET',
-                    headers: {{
-                        'Content-Type': 'application/json',
-                    }}
-                }});
+                let response;
+                if (includeAlternative) {{
+                    // Use POST to include alternative route
+                    const url = `${{apiBase}}/route`;
+                    console.log("Fetching route (POST with alternative) from:", url);
+                    response = await fetch(url, {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{
+                            dataset: dataset,
+                            source_lat: latA,
+                            source_lon: lonA,
+                            target_lat: latB,
+                            target_lon: lonB,
+                            search_radius: searchRadius,
+                            num_candidates: parseInt(numCandidates),
+                            search_mode: searchModeNorm,
+                            algorithm: algorithm,
+                            include_alternative: true,
+                            penalty_factor: penaltyFactor
+                        }})
+                    }});
+                }} else {{
+                    // Use GET for standard routing
+                    const params = new URLSearchParams({{
+                        dataset: dataset,
+                        source_lat: latA,
+                        source_lon: lonA,
+                        target_lat: latB,
+                        target_lon: lonB,
+                        search_radius: searchRadius,
+                        num_candidates: numCandidates,
+                        search_mode: searchModeNorm,
+                        algorithm: algorithm
+                    }});
+                    const url = `${{apiBase}}/route?${{params.toString()}}`;
+                    console.log("Fetching route (GET) from:", url);
+                    response = await fetch(url, {{
+                        method: 'GET',
+                        headers: {{ 'Content-Type': 'application/json' }}
+                    }});
+                }}
                 const data = await response.json();
+
                 console.log("API Response:", data);
                 
                 if (routeLayer) map.removeLayer(routeLayer);
+                if (altRouteLayer) {{ map.removeLayer(altRouteLayer); altRouteLayer = null; }}
                 debugLayer.clearLayers();
 
                 var routeCoords = [];
@@ -500,6 +536,25 @@ html_code = f"""
                     }}).addTo(map);
                 }}
                 
+                // Render alternative route if present
+                if (data.alternative_route && data.alternative_route.geojson) {{
+                    const altGeojson = data.alternative_route.geojson;
+                    var altCoords = [];
+                    if (altGeojson.type === 'Feature' && altGeojson.geometry && altGeojson.geometry.type === 'LineString') {{
+                        altGeojson.geometry.coordinates.forEach(coord => {{
+                            altCoords.push([coord[1], coord[0]]);
+                        }});
+                    }}
+                    if (altCoords.length > 0) {{
+                        altRouteLayer = L.polyline(altCoords, {{
+                            color: '#ff6600',
+                            weight: 4,
+                            opacity: 0.7,
+                            dashArray: '10, 5'
+                        }}).addTo(map);
+                    }}
+                }}
+                
                 if (data.success === false) {{
                     document.getElementById('disp-time').innerText = "No route";
                     document.getElementById('disp-dist').innerText = data.error || "Path not found";
@@ -562,6 +617,10 @@ html_code = f"""
             if (routeLayer) {{
                 map.removeLayer(routeLayer);
                 routeLayer = null;
+            }}
+            if (altRouteLayer) {{
+                map.removeLayer(altRouteLayer);
+                altRouteLayer = null;
             }}
         }}
 
@@ -785,9 +844,21 @@ html_code = f"""
                 map.removeLayer(debugLayer);
             }}
         }});
+        // Toggle Alternative Route
+        document.getElementById('include-alternative').addEventListener('change', onDrag);
+        // Penalty Factor Slider
+        document.getElementById('penalty-factor').addEventListener('input', function() {{
+            document.getElementById('penalty-value').innerText = this.value;
+        }});
+        document.getElementById('penalty-factor').addEventListener('change', function() {{
+            if (document.getElementById('include-alternative').checked) {{
+                onDrag();
+            }}
+        }});
 
         // Initial Call
         // onDrag(); // Disabled to prevent auto-routing on load (avoids immediate crash if dataset large)
+
     </script>
 </body>
 </html>

@@ -144,6 +144,16 @@ public:
     QueryResult query_classic(uint32_t source_edge, uint32_t target_edge) const;
 
     /**
+     * @brief Classic bidirectional Dijkstra with penalties applied to nodes.
+     */
+    QueryResult query_classic_alt(
+        uint32_t source_edge, 
+        uint32_t target_edge, 
+        const std::vector<uint32_t>& penalized_nodes, 
+        double penalty_factor
+    ) const;
+
+    /**
      * @brief Standard bidirectional Dijkstra (no filtering).
      */
     QueryResult query_bidijkstra(uint32_t source_edge, uint32_t target_edge) const;

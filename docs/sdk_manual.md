@@ -120,6 +120,8 @@ Calculate the shortest path between two points.
 | `mode` | `str` | `"knn"` | Lookup mode: `knn`, `radius`, `one_to_one`. |
 | `num_candidates` | `int` | `3` | Candidates for `knn` mode. |
 | `algorithm` | `str` | `"bi_lca_res_sp"` | Algorithm: `bi_classic_sp`, `bi_dijkstra_sp`, `m2m_classic_sp`, etc. |
+| `include_alternative` | `bool` | `False` | If `True`, also compute an alternative route. |
+| `penalty_factor` | `float` | `2.0` | Penalty multiplier for alternative route nodes. |
 
 #### Return Value
 Returns a `RouteResponse` object.
@@ -130,13 +132,20 @@ response = client.route(
     dataset="vancouver",
     start_lat=49.2, start_lng=-123.1,
     end_lat=49.3, end_lng=-123.2,
-    algorithm="pruned"
+    algorithm="pruned",
+    include_alternative=True
 )
 
 if response.success:
     print(f"Travel Cost: {response.cost}")
     print(f"Length (meters): {response.distance_meters}")
     print(f"Path Edges: {len(response.path)}")
+    
+    # Check for alternative route
+    if response.alternative_route:
+        alt = response.alternative_route
+        print(f"Alternative Cost: {alt['distance']}")
+        print(f"Alternative Length: {alt['distance_meters']} m")
 ```
 
 ---
@@ -205,3 +214,4 @@ print(f"Shortcut IDs: {res['route']['shortcut_path']}")
 | `path` | `List[int]` | Ordered list of base road edge IDs. |
 | `geojson` | `dict` | GeoJSON LineString dictionary. |
 | `error` | `str` | Error message if `success` is `False`. |
+| `alternative_route` | `dict` | Alternative route info (if requested). Contains `distance`, `distance_meters`, `path`, `geojson`. |

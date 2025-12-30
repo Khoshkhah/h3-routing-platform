@@ -5,12 +5,17 @@ This module provides all routing algorithms for the H3 Routing Platform.
 
 Algorithms:
 - dijkstra_sp: Ground truth, no filtering
+- bi_dijkstra_sp: Bidirectional Dijkstra (no filtering)
 - bi_classic_sp: Bidirectional with inside filtering only
+- bi_classic_alt_sp: Alternative path using penalty method (thread-safe)
+- bi_dijkstra_alt_sp: Alternative path using standard bidirectional Dijkstra (no filtering)
 - bi_lca_res_sp: Bidirectional with LCA resolution pruning
 - uni_lca_sp: Unidirectional phase-based with LCA
 - bi_lca_sp: Bidirectional phase-based with LCA (fastest)
-- m2m_classic_sp: Many-to-many with inside filtering (TODO)
-- m2m_lca_sp: Many-to-many phase-based (TODO)
+- m2m_classic_sp: Many-to-many with inside filtering
+- load_via_lookup: Load via_edge lookup table
+- expand_path_sp: Expand shortcut path to base edges
+
 
 Usage:
     from routing_algorithms_sp import dijkstra_sp, bi_lca_sp
@@ -123,6 +128,86 @@ def load_adjacency(con: duckdb.DuckDBPyConnection) -> Tuple[Dict, Dict]:
     return fwd_adj, bwd_adj
 
 
+def load_via_lookup(con: duckdb.DuckDBPyConnection) -> Dict[Tuple[int, int], int]:
+    """Load via_edge lookup table from shortcuts table."""
+    shortcuts_raw = con.execute("SELECT from_edge, to_edge, via_edge FROM shortcuts").fetchall()
+    return {(f, t): v for f, t, v in shortcuts_raw}
+
+
+def get_shortcut_base_edges(shortcut_id: int, via_lookup: Dict[Tuple[int, int], int], fwd_adj: Dict) -> List[int]:
+    """Get all base edges that comprise a given shortcut ID."""
+    # We need the (from, to) for the shortcut to look it up in via_lookup
+    # This is slightly tricky since we only have the ID. 
+    # But in this system, the ID *is* the edge.
+    # However, to find its via_edge, we need its source and target nodes in the dual graph.
+    # In the dual graph, an edge E is a node, so we need to know what E connects from/to.
+    # Actually, the 'shortcuts' table has 'from_edge' and 'to_edge'.
+    # For a shortcut ID to be in the via_lookup, it must be the 'via_edge' of something,
+    # or it's a base edge.
+    pass # Wait, let's use the recursive expansion logic instead.
+
+
+
+def expand_path_sp(shortcut_path: List[int], via_lookup: Dict[Tuple[int, int], int]) -> List[int]:
+    """
+    Expand a shortcut path to base edges using the via_lookup table.
+    
+    Algorithm:
+    1. For each consecutive pair (u, v) in path, call expand_edge_pair(u, v)
+    2. expand_edge_pair looks up (u, v) in table to get via_edge
+    3. If via_edge == u or via_edge == v or via_edge == 0, return [u, v] (base pair)
+    4. Otherwise, recursively expand (u, via) and (via, v), combine results
+    """
+    if not shortcut_path:
+        return []
+    if len(shortcut_path) == 1:
+        return [shortcut_path[0]]
+    
+    def expand_edge_pair(u: int, v: int, visited: set) -> List[int]:
+        """Expand a single edge pair (u, v) to base edges."""
+        key = (u, v)
+        
+        # Cycle detection
+        if key in visited:
+            return [u, v]
+        visited.add(key)
+        
+        # Look up via_edge for this pair
+        via = via_lookup.get(key)
+        
+        # If no expansion found or via equals u or v or 0, it's a base pair
+        if via is None or via == u or via == v or via == 0:
+            return [u, v]
+        
+        # Recursively expand (u, via) and (via, v)
+        left = expand_edge_pair(u, via, visited)
+        right = expand_edge_pair(via, v, visited)
+        
+        # Combine: left ends with junction point, right starts with it
+        # Avoid duplicating the junction
+        if left and right and left[-1] == right[0]:
+            return left + right[1:]
+        else:
+            return left + right
+
+    # Expand each consecutive pair in the path
+    result = []
+    for i in range(len(shortcut_path) - 1):
+        u, v = shortcut_path[i], shortcut_path[i + 1]
+        visited = set()
+        expanded = expand_edge_pair(u, v, visited)
+        
+        # Merge with previous result, avoiding duplicate junction
+        if not result:
+            result = expanded
+        elif result and expanded and result[-1] == expanded[0]:
+            result.extend(expanded[1:])
+        else:
+            result.extend(expanded)
+    
+    return result
+
+
 # =============================================================================
 # ALGORITHM 1: dijkstra - Ground truth (no filtering)
 # =============================================================================
@@ -194,103 +279,70 @@ def bi_dijkstra_sp(
     bwd_adj: Dict = None
 ) -> Tuple[float, List[int], bool]:
     """
-    Standard Bidirectional Dijkstra (no inside filtering).
-    Should match Dijkstra results exactly but potentially faster.
-    
-    Returns:
-        Tuple of (cost, path, success)
+    True Bidirectional Dijkstra (no inside filtering).
+    Always expands from the side with the smaller minimum distance.
+    Stops as soon as pq_fwd.min + pq_bwd.min >= best_cost.
     """
     if source_edge == target_edge:
         return get_edge_cost(con, source_edge), [source_edge], True
     
-    # Load adjacency if not provided
     if fwd_adj is None or bwd_adj is None:
         fwd_adj, bwd_adj = load_adjacency(con)
     
     dist_fwd: Dict[int, float] = {source_edge: 0.0}
-    dist_bwd: Dict[int, float] = {}
     parent_fwd: Dict[int, int] = {source_edge: source_edge}
-    parent_bwd: Dict[int, int] = {}
-    
     pq_fwd = [(0.0, source_edge)]
-    target_cost = get_edge_cost(con, target_edge)
-    dist_bwd[target_edge] = target_cost
-    parent_bwd[target_edge] = target_edge
-    pq_bwd = [(target_cost, target_edge)]
+    
+    dist_bwd: Dict[int, float] = {target_edge: 0.0}
+    parent_bwd: Dict[int, int] = {target_edge: target_edge}
+    pq_bwd = [(0.0, target_edge)]
     
     best = INF
     meeting_edge = None
     
-    while pq_fwd or pq_bwd:
-        # Forward step
-        if pq_fwd:
-            d, u = heapq.heappop(pq_fwd)
-            
-            if d > dist_fwd.get(u, INF) or d >= best:
-                pass
-            else:
-                for to_edge, cost, inside, cell_res in fwd_adj.get(u, []):
-                    # NO FILTERING
-                    nd = d + cost
-                    if to_edge not in dist_fwd or nd < dist_fwd[to_edge]:
-                        dist_fwd[to_edge] = nd
-                        parent_fwd[to_edge] = u
-                        heapq.heappush(pq_fwd, (nd, to_edge))
-                        
-                        # Check meeting
-                        if to_edge in dist_bwd:
-                            total = nd + dist_bwd[to_edge]
-                            if total < best:
-                                best = total
-                                meeting_edge = to_edge
-        
-        # Backward step
-        if pq_bwd:
-            d, u = heapq.heappop(pq_bwd)
-            
-            if d > dist_bwd.get(u, INF) or d >= best:
-                pass
-            else:
-                for from_edge, cost, inside, cell_res in bwd_adj.get(u, []):
-                    # NO FILTERING
-                    nd = d + cost
-                    if from_edge not in dist_bwd or nd < dist_bwd[from_edge]:
-                        dist_bwd[from_edge] = nd
-                        parent_bwd[from_edge] = u
-                        heapq.heappush(pq_bwd, (nd, from_edge))
-                        
-                        # Check meeting
-                        if from_edge in dist_fwd:
-                            total = dist_fwd[from_edge] + nd
-                            if total < best:
-                                best = total
-                                meeting_edge = from_edge
-        
-        # Early termination
-        if pq_fwd and pq_bwd:
-            if pq_fwd[0][0] >= best and pq_bwd[0][0] >= best:
-                break
-        elif not pq_fwd and not pq_bwd:
+    while pq_fwd and pq_bwd:
+        if pq_fwd[0][0] + pq_bwd[0][0] >= best:
             break
+            
+        if pq_fwd[0][0] <= pq_bwd[0][0]:
+            d, u = heapq.heappop(pq_fwd)
+            if d > dist_fwd.get(u, INF): continue
+            for v, cost, inside, res in fwd_adj.get(u, []):
+                nd = d + cost
+                if nd < dist_fwd.get(v, INF):
+                    dist_fwd[v], parent_fwd[v] = nd, u
+                    heapq.heappush(pq_fwd, (nd, v))
+                    if v in dist_bwd and nd + dist_bwd[v] < best:
+                        best, meeting_edge = nd + dist_bwd[v], v
+        else:
+            d, u = heapq.heappop(pq_bwd)
+            if d > dist_bwd.get(u, INF): continue
+            for v, cost, inside, res in bwd_adj.get(u, []):
+                nd = d + cost
+                if nd < dist_bwd.get(v, INF):
+                    dist_bwd[v], parent_bwd[v] = nd, u
+                    heapq.heappush(pq_bwd, (nd, v))
+                    if v in dist_fwd and dist_fwd[v] + nd < best:
+                        best, meeting_edge = dist_fwd[v] + nd, v
     
-    if best == INF:
-        return -1, [], False
-    
-    # Reconstruct path
-    path = []
-    curr = meeting_edge
-    while curr != parent_fwd.get(curr):
-        path.append(curr)
-        curr = parent_fwd[curr]
-    path.append(curr)
-    path.reverse()
-    
-    curr = meeting_edge
-    while parent_bwd.get(curr) != curr:
-        curr = parent_bwd[curr]
-        path.append(curr)
-    
-    return best, path, True
+    if best == INF: return -1, [], False
+        
+    path, curr = [], meeting_edge
+    while curr != parent_fwd[curr]: path.append(curr); curr = parent_fwd[curr]
+    path.append(curr); path.reverse(); curr = meeting_edge
+    while curr != parent_bwd[curr]: curr = parent_bwd[curr]; path.append(curr)
+
+    # Final cost calculation (sum of edge costs)
+    final_cost = get_edge_cost(con, path[0])
+    for j in range(len(path) - 1):
+        found = False
+        for n, c, i, r in fwd_adj.get(path[j], []):
+            if n == path[j+1]: final_cost += c; found = True; break
+        if not found: return -1, [], False
+
+    return final_cost, path, True
+
+
 
 
 # =============================================================================
@@ -408,8 +460,175 @@ def bi_classic_sp(
 
 
 # =============================================================================
+# ALGORITHM 2-ALT: bi_classic_alt_sp - Alternative path using penalty method
+# =============================================================================
+
+# =============================================================================
+# ALGORITHM 2-ALT: bi_classic_alt_sp - Alternative path (Hierarchical)
+# =============================================================================
+
+# =============================================================================
+# ALGORITHM 2-ALT: bi_classic_alt_sp - Alternative path (Hierarchical)
+# =============================================================================
+
+def bi_classic_alt_sp(
+    con: duckdb.DuckDBPyConnection,
+    source_edge: int,
+    target_edge: int,
+    shortest_path: List[int],
+    fwd_adj: Dict = None,
+    bwd_adj: Dict = None,
+    penalty_factor: float = 2.0,
+    via_lookup: Dict = None
+) -> Tuple[float, List[int], bool]:
+    """Find alternative path using hierarchical filtering and simple node-based penalties."""
+    if fwd_adj is None or bwd_adj is None: fwd_adj, bwd_adj = load_adjacency(con)
+    
+    # Penalize any node that was in the shortest path
+    penalized_nodes = set(shortest_path)
+    penalized_nodes.discard(source_edge)
+    penalized_nodes.discard(target_edge)
+
+    if source_edge == target_edge: return get_edge_cost(con, source_edge), [source_edge], True
+    
+    dist_fwd, dist_bwd = {source_edge: 0.0}, {target_edge: get_edge_cost(con, target_edge)}
+    parent_fwd, parent_bwd = {source_edge: source_edge}, {target_edge: target_edge}
+    pq_fwd, pq_bwd = [(0.0, source_edge)], [(dist_bwd[target_edge], target_edge)]
+    best, meeting_edge = INF, None
+
+    while pq_fwd or pq_bwd:
+        if pq_fwd:
+            d, u = heapq.heappop(pq_fwd)
+            if d < dist_fwd.get(u, INF) and d < best:
+                for v, cost, inside, res in fwd_adj.get(u, []):
+                    if inside != 1: continue
+                    eff_cost = cost * penalty_factor if v in penalized_nodes else cost
+                    nd = d + eff_cost
+                    if nd < dist_fwd.get(v, INF):
+                        dist_fwd[v], parent_fwd[v] = nd, u
+                        heapq.heappush(pq_fwd, (nd, v))
+                        if v in dist_bwd and nd+dist_bwd[v] < best: best, meeting_edge = nd+dist_bwd[v], v
+        if pq_bwd:
+            d, u = heapq.heappop(pq_bwd)
+            if d < dist_bwd.get(u, INF) and d < best:
+                for v, cost, inside, res in bwd_adj.get(u, []):
+                    if inside not in (-1, 0): continue
+                    eff_cost = cost * penalty_factor if v in penalized_nodes else cost
+                    nd = d + eff_cost
+                    if nd < dist_bwd.get(v, INF):
+                        dist_bwd[v], parent_bwd[v] = nd, u
+                        heapq.heappush(pq_bwd, (nd, v))
+                        if v in dist_fwd and dist_fwd[v]+nd < best: best, meeting_edge = dist_fwd[v]+nd, v
+        if pq_fwd and pq_bwd and pq_fwd[0][0] >= best and pq_bwd[0][0] >= best: break
+
+    if best == INF: return -1, [], False
+    
+    path, curr = [], meeting_edge
+    while curr != parent_fwd[curr]: path.append(curr); curr = parent_fwd[curr]
+    path.append(curr); path.reverse(); curr = meeting_edge
+    while curr != parent_bwd[curr]: curr = parent_bwd[curr]; path.append(curr)
+    
+    # Calculate true cost (without penalties)
+    true_cost_total = get_edge_cost(con, path[0])
+    for j in range(len(path) - 1):
+        found = False
+        for n, c, i, r in fwd_adj.get(path[j], []):
+            if n == path[j+1]: true_cost_total += c; found = True; break
+        if not found: return -1, [], False
+    return true_cost_total, path, True
+
+
+# =============================================================================
+# ALGORITHM 1.5-ALT: bi_dijkstra_alt_sp - Alternative path (No filtering)
+# =============================================================================
+
+def bi_dijkstra_alt_sp(
+    con: duckdb.DuckDBPyConnection,
+    source_edge: int,
+    target_edge: int,
+    shortest_path: List[int],
+    fwd_adj: Dict = None,
+    bwd_adj: Dict = None,
+    penalty_factor: float = 2.0,
+    via_lookup: Dict = None
+) -> Tuple[float, List[int], bool]:
+    """
+    True Bidirectional Dijkstra (no inside filtering) with node-based penalties.
+    Always expands from the side with the smaller minimum distance.
+    Stops as soon as pq_fwd.min + pq_bwd.min >= best_cost.
+    """
+    if fwd_adj is None or bwd_adj is None: fwd_adj, bwd_adj = load_adjacency(con)
+    
+    # Penalize any node that was in the shortest path
+    penalized_nodes = set(shortest_path)
+    penalized_nodes.discard(source_edge)
+    penalized_nodes.discard(target_edge)
+
+    if source_edge == target_edge: return get_edge_cost(con, source_edge), [source_edge], True
+    
+    dist_fwd, dist_bwd = {source_edge: 0.0}, {target_edge: 0.0}
+    parent_fwd, parent_bwd = {source_edge: source_edge}, {target_edge: target_edge}
+    pq_fwd, pq_bwd = [(0.0, source_edge)], [(0.0, target_edge)]
+    best, meeting_edge = INF, None
+
+    while pq_fwd and pq_bwd:
+        # Termination condition
+        if pq_fwd[0][0] + pq_bwd[0][0] >= best:
+            break
+            
+        # Select side: expand smaller distance
+        if pq_fwd[0][0] <= pq_bwd[0][0]:
+            d, u = heapq.heappop(pq_fwd)
+            if d > dist_fwd.get(u, INF): continue
+            
+            for v, cost, inside, res in fwd_adj.get(u, []):
+                eff_cost = cost * penalty_factor if v in penalized_nodes else cost
+                nd = d + eff_cost
+                if nd < dist_fwd.get(v, INF):
+                    dist_fwd[v], parent_fwd[v] = nd, u
+                    heapq.heappush(pq_fwd, (nd, v))
+                    if v in dist_bwd and nd + dist_bwd[v] < best:
+                        best, meeting_edge = nd + dist_bwd[v], v
+        else:
+            d, u = heapq.heappop(pq_bwd)
+            if d > dist_bwd.get(u, INF): continue
+            
+            for v, cost, inside, res in bwd_adj.get(u, []):
+                eff_cost = cost * penalty_factor if v in penalized_nodes else cost
+                nd = d + eff_cost
+                if nd < dist_bwd.get(v, INF):
+                    dist_bwd[v], parent_bwd[v] = nd, u
+                    heapq.heappush(pq_bwd, (nd, v))
+                    if v in dist_fwd and dist_fwd[v] + nd < best:
+                        best, meeting_edge = dist_fwd[v] + nd, v
+
+    if best == INF: return -1, [], False
+    
+    path, curr = [], meeting_edge
+    while curr != parent_fwd[curr]: path.append(curr); curr = parent_fwd[curr]
+    path.append(curr); path.reverse(); curr = meeting_edge
+    while curr != parent_bwd[curr]: curr = parent_bwd[curr]; path.append(curr)
+    
+    # Calculate true cost (without penalties)
+    true_cost_total = get_edge_cost(con, path[0])
+    for j in range(len(path) - 1):
+        found = False
+        for n, c, i, r in fwd_adj.get(path[j], []):
+            if n == path[j+1]: true_cost_total += c; found = True; break
+        if not found: return -1, [], False
+    return true_cost_total, path, True
+
+
+
+
+
+
+
+
+# =============================================================================
 # ALGORITHM 3: uni_lca - Unidirectional phase-based with LCA
 # =============================================================================
+
 
 def uni_lca_sp(
     con: duckdb.DuckDBPyConnection,

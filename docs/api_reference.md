@@ -16,6 +16,8 @@ Finds the shortest path between two coordinate pairs using the platform's routin
 | `mode` | string | Search strategy: `knn`, `radius`, `one_to_one`, `one_to_one_v2`. |
 | `algorithm` | string | Algorithm: `bi_classic_sp`, `bi_dijkstra_sp`, `bi_lca_res_sp`, `m2m_classic_sp`, etc. |
 | `num_candidates` | integer | Number of nearest edges to consider (for `knn` mode). |
+| `include_alternative` | boolean | If `true`, also compute an alternative route (default: `false`). |
+| `penalty_factor` | float | Penalty multiplier for alternative route nodes (default: `2.0`). |
 
 #### Response Schema
 | Field | Type | Description |
@@ -25,6 +27,7 @@ Finds the shortest path between two coordinate pairs using the platform's routin
 | `route.distance_meters`| float | Physical length of the path in meters. |
 | `route.path` | array | Sequential list of base road edge IDs. |
 | `route.geojson` | object | GeoJSON LineString representation of the path. |
+| `alternative_route` | object | Alternative route (if `include_alternative` was `true`). Same structure as `route`. |
 
 #### Example
 ```bash

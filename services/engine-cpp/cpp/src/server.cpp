@@ -762,6 +762,47 @@ int main(int argc, char* argv[]) {
                         {"high", build_cell_info(high.cell)}
                     }}
                 };
+                
+                // Alternative route if requested
+                bool include_alternative = false;
+                double penalty_factor = 2.0;
+                if (req.method == "POST"_method) {
+                    auto body = json::parse(req.body);
+                    include_alternative = body.value("include_alternative", false);
+                    penalty_factor = body.value("penalty_factor", 2.0);
+                }
+                
+                if (include_alternative && !expanded_path.empty()) {
+                    // Use the actual source/target from the expanded path (base edges)
+                    uint32_t source = expanded_path.front();
+                    uint32_t target = expanded_path.back();
+                    auto alt_start = std::chrono::high_resolution_clock::now();
+                    // Pass expanded_path for penalties - this ensures we penalize actual road segments
+                    QueryResult alt_result = ds->graph.query_classic_alt(source, target, expanded_path, penalty_factor);
+                    auto alt_end = std::chrono::high_resolution_clock::now();
+                    double alt_runtime_ms = std::chrono::duration<double, std::milli>(alt_end - alt_start).count();
+
+                    
+                    if (alt_result.reachable) {
+                        auto alt_expanded = ds->graph.expand_path(alt_result.path);
+                        json alt_geojson = build_geojson(*ds, alt_expanded);
+                        if (alt_geojson != nullptr && alt_geojson.contains("geometry")) {
+                            auto trimmed = trim_geojson_coords(alt_geojson["geometry"]["coordinates"], start_lat, start_lng, end_lat, end_lng);
+                            alt_geojson["geometry"]["coordinates"] = trimmed;
+                        }
+                        response["alternative_route"] = {
+                            {"distance", alt_result.distance},
+                            {"distance_meters", calculate_distance_meters(*ds, alt_expanded)},
+                            {"runtime_ms", alt_runtime_ms},
+                            {"path", json(alt_expanded)},
+                            {"shortcut_path", alt_result.path},
+                            {"geojson", alt_geojson}
+                        };
+                    } else {
+                        response["alternative_route"] = nullptr;
+                    }
+                }
+
             } else {
                 response["success"] = false;
                 response["error"] = "No path found";
@@ -790,6 +831,8 @@ int main(int argc, char* argv[]) {
             uint32_t source = body["source_edge"];
             uint32_t target = body["target_edge"];
             std::string algorithm = body.value("algorithm", "pruned");
+            bool include_alternative = body.value("include_alternative", false);
+            double penalty_factor = body.value("penalty_factor", 2.0);
             
             Dataset* ds = get_dataset(dataset_name);
             if (!ds) {
@@ -797,14 +840,92 @@ int main(int argc, char* argv[]) {
                 return crow::response(503, response.dump());
             }
             
+            // Run shortest path query
             QueryResult result;
             if (algorithm == "classic") {
                 result = ds->graph.query_classic(source, target);
             } else if (algorithm == "unidirectional") {
                 result = ds->graph.query_unidirectional(source, target);
+            } else if (algorithm == "bidijkstra") {
+                result = ds->graph.query_bidijkstra(source, target);
             } else {
                 result = ds->graph.query_pruned(source, target);
             }
+            
+            auto end_time = std::chrono::high_resolution_clock::now();
+            double runtime_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
+            
+            json response;
+            if (result.reachable) {
+                // Expand shortcut path to base edges
+                auto expanded_path = ds->graph.expand_path(result.path);
+                
+                response["success"] = true;
+                response["route"] = {
+                    {"distance", result.distance},
+                    {"distance_meters", calculate_distance_meters(*ds, expanded_path)},
+                    {"runtime_ms", runtime_ms},
+                    {"path", expanded_path},
+                    {"shortcut_path", result.path},
+                    {"geojson", build_geojson(*ds, expanded_path)}
+                };
+                
+                // If alternative requested, run query_classic_alt with shortest path as penalties
+                if (include_alternative) {
+                    auto alt_start = std::chrono::high_resolution_clock::now();
+                    QueryResult alt_result = ds->graph.query_classic_alt(source, target, result.path, penalty_factor);
+                    auto alt_end = std::chrono::high_resolution_clock::now();
+                    double alt_runtime_ms = std::chrono::duration<double, std::milli>(alt_end - alt_start).count();
+                    
+                    if (alt_result.reachable) {
+                        auto alt_expanded = ds->graph.expand_path(alt_result.path);
+                        response["alternative_route"] = {
+                            {"distance", alt_result.distance},
+                            {"distance_meters", calculate_distance_meters(*ds, alt_expanded)},
+                            {"runtime_ms", alt_runtime_ms},
+                            {"path", alt_expanded},
+                            {"shortcut_path", alt_result.path},
+                            {"geojson", build_geojson(*ds, alt_expanded)}
+                        };
+                    } else {
+                        response["alternative_route"] = nullptr;
+                    }
+                }
+            } else {
+                response["success"] = false;
+                response["error"] = "No path found";
+                response["runtime_ms"] = runtime_ms;
+            }
+            
+            return crow::response(200, response.dump());
+            
+        } catch (const std::exception& e) {
+            json response = {{"success", false}, {"error", e.what()}};
+            return crow::response(400, response.dump());
+        }
+    });
+
+    // ============================================================
+    // ROUTE ALTERNATIVE BY EDGE IDs
+    // ============================================================
+    CROW_ROUTE(app, "/route_alt_by_edge").methods("POST"_method)([](const crow::request& req) {
+        auto start_time = std::chrono::high_resolution_clock::now();
+        
+        try {
+            auto body = json::parse(req.body);
+            std::string dataset_name = body.value("dataset", "default");
+            uint32_t source = body["source_edge"];
+            uint32_t target = body["target_edge"];
+            std::vector<uint32_t> penalized_nodes = body.value("penalized_nodes", std::vector<uint32_t>{});
+            double penalty_factor = body.value("penalty_factor", 2.0);
+            
+            Dataset* ds = get_dataset(dataset_name);
+            if (!ds) {
+                json response = {{"success", false}, {"error", "Dataset '" + dataset_name + "' not loaded"}};
+                return crow::response(503, response.dump());
+            }
+            
+            QueryResult result = ds->graph.query_classic_alt(source, target, penalized_nodes, penalty_factor);
             
             auto end_time = std::chrono::high_resolution_clock::now();
             double runtime_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
