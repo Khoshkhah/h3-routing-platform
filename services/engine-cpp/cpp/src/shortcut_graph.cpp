@@ -634,9 +634,9 @@ QueryResult ShortcutGraph::query_bidijkstra(uint32_t source_edge, uint32_t targe
     parent_fwd[source_edge] = source_edge;
     pq_fwd.push({0.0, source_edge});
     
-    dist_bwd[target_edge] = 0.0;
+    dist_bwd[target_edge] = get_edge_cost(target_edge);
     parent_bwd[target_edge] = target_edge;
-    pq_bwd.push({0.0, target_edge});
+    pq_bwd.push({get_edge_cost(target_edge), target_edge});
     
     double best = INF;
     uint32_t meeting = 0;
@@ -721,7 +721,7 @@ QueryResult ShortcutGraph::query_bidijkstra(uint32_t source_edge, uint32_t targe
     }
     
     // Final cost: cost of first edge + sum of transitions
-    double final_cost = get_edge_cost(path[0]) + best;
+    double final_cost = best;
     return {final_cost, path, true, ""};
 }
 
@@ -920,8 +920,7 @@ struct PQEntryUni {
     double dist;
     uint32_t edge;
     int u_res;
-    int counter;
-    bool used_minus1;
+    int phase; // 0-3
     
     bool operator>(const PQEntryUni& o) const { return dist > o.dist; }
 };
@@ -932,20 +931,19 @@ QueryResult ShortcutGraph::query_unidirectional(uint32_t source_edge, uint32_t t
     }
 
     HighCell high = compute_high_cell(source_edge, target_edge);
-    const int MAX_USES = 2;
     constexpr double INF = std::numeric_limits<double>::infinity();
 
     // Priority Queue
     std::priority_queue<PQEntryUni, std::vector<PQEntryUni>, std::greater<PQEntryUni>> pq;
 
     // Distances and Parents map
-    // Key packing: (u << 4) | (counter << 1) | used_minus1
+    // Key packing: (u << 4) | phase
     using StateKey = uint64_t;
     std::unordered_map<StateKey, double> dist;
     std::unordered_map<StateKey, StateKey> parent;
 
-    auto pack_key = [](uint32_t u, int counter, bool used_minus1) -> StateKey {
-        return (static_cast<uint64_t>(u) << 4) | (static_cast<uint64_t>(counter) << 1) | (used_minus1 ? 1 : 0);
+    auto pack_key = [](uint32_t u, int phase) -> StateKey {
+        return (static_cast<uint64_t>(u) << 4) | (static_cast<uint64_t>(phase) & 0xF);
     };
 
     // Initialize source
@@ -955,32 +953,31 @@ QueryResult ShortcutGraph::query_unidirectional(uint32_t source_edge, uint32_t t
         src_res = meta_it->second.lca_res;
     }
 
-    StateKey start_key = pack_key(source_edge, 0, false);
-    dist[start_key] = 0.0;
+    StateKey start_key = pack_key(source_edge, 0);
+    double src_cost = 0; // Match Python: Start with 0
+    dist[start_key] = src_cost;
     parent[start_key] = start_key;
     
-    pq.push({0.0, source_edge, src_res, 0, false});
+    pq.push({src_cost, source_edge, src_res, 0});
 
     double best = INF;
     StateKey final_state_key = 0;
     bool found = false;
 
     while (!pq.empty()) {
-        auto [d, u, u_res, counter, used_minus1] = pq.top();
+        auto [d, u, u_res, phase] = pq.top();
         pq.pop();
 
-        StateKey current_key = pack_key(u, counter, used_minus1);
+        StateKey current_key = pack_key(u, phase);
         
         auto it = dist.find(current_key);
         if (it != dist.end() && d > it->second) continue;
 
         if (u == target_edge) {
-            if (d < best) {
-                best = d;
-                final_state_key = current_key;
-                found = true;
-                break;
-            }
+            best = d + get_edge_cost(target_edge); // Match Python: Add target at end
+            final_state_key = current_key;
+            found = true;
+            break;
         }
 
         auto adj_it = fwd_adj_.find(u);
@@ -990,33 +987,23 @@ QueryResult ShortcutGraph::query_unidirectional(uint32_t source_edge, uint32_t t
             const Shortcut& sc = shortcuts_[idx];
             
             bool allowed = false;
-            int next_counter = counter;
-            bool next_used_minus1 = used_minus1;
+            int next_phase = phase;
 
-            if (u_res > high.res) {
-                // ABOVE PEAK
-                if (sc.inside == 1 && !used_minus1) allowed = true;
-                else if (sc.inside == -1 && used_minus1) allowed = true;
-            } else {
-                // AT OR BELOW PEAK
-                if (used_minus1) {
-                    if (sc.inside == -1) allowed = true;
-                } else {
-                    if ((sc.inside == 0 || sc.inside == -2) && counter < MAX_USES) {
-                        allowed = true;
-                        next_counter = counter + 1;
-                        next_used_minus1 = true;
-                    } else if (sc.inside == -1) {
-                        allowed = true;
-                        next_used_minus1 = true;
-                    }
-                }
+            // Logic matching query_uni_lca in algorithms.py
+            if (phase == 0 || phase == 1) {
+                if (sc.cell_res > high.res && sc.inside == 1) { allowed = true; next_phase = 1; }
+                else if (sc.cell_res <= high.res && sc.inside == 1) { allowed = true; next_phase = 2; }
+                else if (sc.inside != 1) { allowed = true; next_phase = 2; }
+            } else if (phase == 2) {
+                if (sc.inside != 1) { allowed = true; next_phase = 3; }
+            } else if (phase == 3) {
+                if (sc.inside == -1) { allowed = true; next_phase = 3; }
             }
 
             if (!allowed) continue;
 
             double nd = d + sc.cost;
-            StateKey next_key = pack_key(sc.to, next_counter, next_used_minus1);
+            StateKey next_key = pack_key(sc.to, next_phase);
 
             auto dist_it = dist.find(next_key);
             if (dist_it == dist.end() || nd < dist_it->second) {
@@ -1029,7 +1016,7 @@ QueryResult ShortcutGraph::query_unidirectional(uint32_t source_edge, uint32_t t
                     next_res = next_meta->second.lca_res;
                 }
                 
-                pq.push({nd, sc.to, next_res, next_counter, next_used_minus1});
+                pq.push({nd, sc.to, next_res, next_phase});
             }
         }
     }
@@ -1044,6 +1031,82 @@ QueryResult ShortcutGraph::query_unidirectional(uint32_t source_edge, uint32_t t
         
         auto it = parent.find(curr);
         if (it == parent.end() || it->second == curr) break;
+        curr = it->second;
+    }
+    std::reverse(path.begin(), path.end());
+    
+    return {best, path, true, ""};
+}
+
+// UNDIRECTIONAL DIJKSTRA (BASELINE)
+QueryResult ShortcutGraph::query_dijkstra(uint32_t source_edge, uint32_t target_edge) const {
+    if (source_edge == target_edge) {
+         return {get_edge_cost(source_edge), {source_edge}, true, ""};
+    }
+
+    constexpr double INF = std::numeric_limits<double>::infinity();
+
+    // Standard Dijkstra Priority Queue entry
+    struct PQEntryD {
+        double dist;
+        uint32_t edge;
+        bool operator>(const PQEntryD& o) const { return dist > o.dist; }
+    };
+
+    std::priority_queue<PQEntryD, std::vector<PQEntryD>, std::greater<PQEntryD>> pq;
+    std::unordered_map<uint32_t, double> dist;
+    std::unordered_map<uint32_t, uint32_t> parent;
+
+    // Init source (cost included) - match other baselines
+    double src_cost = 0;
+    dist[source_edge] = src_cost;
+    parent[source_edge] = source_edge;
+    pq.push({src_cost, source_edge});
+
+    double best = INF;
+    uint32_t meeting_node = 0;
+    bool found = false;
+
+    while (!pq.empty()) {
+        auto [d, u] = pq.top(); pq.pop();
+
+        if (d > dist[u]) continue;
+        
+        if (u == target_edge) {
+            best = d + get_edge_cost(target_edge);
+            meeting_node = u;
+            found = true;
+            break;
+        }
+
+        auto adj_it = fwd_adj_.find(u);
+        if (adj_it == fwd_adj_.end()) continue;
+
+        for (size_t idx : adj_it->second) {
+            const Shortcut& sc = shortcuts_[idx];
+            
+            // Baseline: No Pruning checks on inside/res
+            
+            double nd = d + sc.cost;
+            auto it = dist.find(sc.to);
+            if (it == dist.end() || nd < it->second) {
+                dist[sc.to] = nd;
+                parent[sc.to] = u;
+                pq.push({nd, sc.to});
+            }
+        }
+    }
+
+    if (!found) return {-1, {}, false, "No path found"};
+
+    // Reconstruct path
+    std::vector<uint32_t> path;
+    uint32_t curr = meeting_node;
+    while (true) {
+        path.push_back(curr);
+        if (curr == source_edge) break;
+        auto it = parent.find(curr);
+        if (it == parent.end() || it->second == curr) break; // Should not happen if found
         curr = it->second;
     }
     std::reverse(path.begin(), path.end());

@@ -245,17 +245,17 @@ html_code = f"""
             <div style="padding: 10px; border-bottom: 1px solid #ddd;">
                 <label style="font-size: 12px; color: #666; display: block; margin-bottom: 5px;">Search Mode</label>
                 <select id="search-mode" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
-                    <option value="m2m_classic_sp">Many-to-Many (KNN)</option>
-                    <option value="bi_classic_sp">Bidirectional Classic</option>
-                    <option value="bi_dijkstra_sp">Bi-Dijkstra (Baseline)</option>
-                    <option value="bi_lca_res_sp">Bidirectional Pruned (Res)</option>
-                    <option value="bi_lca_sp">Bidirectional Phase-Based (Best)</option>
-                    <option value="uni_lca_sp">Unidirectional Pruned</option>
-                    <option value="dijkstra_sp">Dijkstra (Baseline)</option>
+                    <option value="pruned">Bidirectional Pruned (Res)</option>
+                    <option value="classic">Bidirectional Classic</option>
+                    <option value="unidirectional">Unidirectional Phase-Based</option>
+                    <option value="bi_lca">Bidirectional Phase-Based (LCA)</option>
+                    <option value="m2m">Many-to-Many (KNN)</option>
+                    <option value="dijkstra">Dijkstra (Baseline)</option>
+                    <option value="bidijkstra">Bi-Dijkstra (Baseline)</option>
                 </select>
             </div>
             <!-- Radius Container Removed -->
-            <div style="padding: 10px; border-bottom: 1px solid #ddd;" id="knn-container" style="display: none;">
+            <div style="padding: 10px; border-bottom: 1px solid #ddd; display: none;" id="knn-container">
                 <label style="font-size: 12px; color: #666; display: block; margin-bottom: 5px;">K (Number of Candidates)</label>
                 <input type="number" id="num-candidates" value="5" min="1" max="20" step="1" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
             </div>
@@ -387,18 +387,8 @@ html_code = f"""
             const dataset = document.getElementById('dataset-selector').value;
             const searchModeRaw = document.getElementById('search-mode').value;
             
-            let searchModeNorm = searchModeRaw;
-            let algorithm = 'pruned';
-            
-            if (searchModeRaw === 'unidirectional') {{
-                 searchModeNorm = 'one_to_one';
-                 algorithm = 'unidirectional';
-            }} else if (searchModeRaw === 'dijkstra') {{
-                 searchModeNorm = 'dijkstra';
-                 algorithm = 'dijkstra';
-            }} else if (searchModeRaw === 'one_to_one') {{
-                 algorithm = 'classic';
-            }}
+            let targetAlgo = searchModeRaw;
+            let targetMode = (searchModeRaw === 'm2m') ? 'knn' : 'one_to_one';
             
             const searchRadius = 2000; // Hardcoded default
             const numCandidates = document.getElementById('num-candidates').value;
@@ -425,8 +415,8 @@ html_code = f"""
                             target_lon: lonB,
                             search_radius: searchRadius,
                             num_candidates: parseInt(numCandidates),
-                            search_mode: searchModeNorm,
-                            algorithm: algorithm,
+                            search_mode: targetMode,
+                            algorithm: targetAlgo,
                             include_alternative: true,
                             penalty_factor: penaltyFactor
                         }})
@@ -441,8 +431,8 @@ html_code = f"""
                         target_lon: lonB,
                         search_radius: searchRadius,
                         num_candidates: numCandidates,
-                        search_mode: searchModeNorm,
-                        algorithm: algorithm
+                        search_mode: targetMode,
+                        algorithm: targetAlgo
                     }});
                     const url = `${{apiBase}}/route?${{params.toString()}}`;
                     console.log("Fetching route (GET) from:", url);
@@ -559,10 +549,12 @@ html_code = f"""
                     document.getElementById('disp-time').innerText = "No route";
                     document.getElementById('disp-dist').innerText = data.error || "Path not found";
                 }} else {{
-                    // Parse values
-                    var costSeconds = (data.distance || 0) * 3.6;
-                    var physicalMeters = data.distance_meters || 0;
-                    var runtimeMs = data.runtime_ms || 0;
+                    // Parse values handling both flat (Python) and nested (C++ Engine) formats
+                    let routeData = data.route || data; // Use data.route if exists, else top-level
+                    
+                    var costSeconds = (routeData.distance || 0) * 3.6;
+                    var physicalMeters = routeData.distance_meters || 0;
+                    var runtimeMs = routeData.runtime_ms || 0;
 
                     // Helper for time formatting
                     function formatTime(seconds) {{
@@ -571,18 +563,24 @@ html_code = f"""
                         return m + " min " + s + " sec";
                     }}
 
+                    // Helper for distance formatting
+                    function formatDist(meters) {{
+                        return (meters > 1000) ? (meters/1000).toFixed(2) + ' km' : meters.toFixed(0) + ' m';
+                    }}
+
                     // Display Cost as Time
                     document.getElementById('disp-time').innerText = formatTime(costSeconds);
                     
                     // Display Physical Distance
-                    var distDisplay = (physicalMeters > 1000) ? (physicalMeters/1000).toFixed(2) + ' km' : physicalMeters.toFixed(0) + ' m';
-                    document.getElementById('disp-dist').innerText = distDisplay;
+                    document.getElementById('disp-dist').innerText = formatDist(physicalMeters);
                     
                     // Detailed Timing Display
                     let timeText = runtimeMs.toFixed(2) + ' ms';
+                    let breakdownHtml = "";
+                    
                     if (data.timing_breakdown) {{
                         const tb = data.timing_breakdown;
-                        let breakdownHtml = `
+                        breakdownHtml = `
                             <div style="font-size: 10px; color: #666; margin-top: 5px;">
                                 <div>Runtime: ${{timeText}}</div>
                                 <div>Find Nearest: ${{tb.find_nearest_us}} µs</div>
@@ -591,12 +589,24 @@ html_code = f"""
                                 <div>GeoJSON: ${{tb.geojson_us}} µs</div>
                             </div>
                         `;
-                        // Append to time box or a separate area?
-                        // Let's replace the time stat with cost, but add runtime metrics below it suitable
-                        document.getElementById('disp-time').innerHTML = formatTime(costSeconds) + 
-                            `<div style="font-size: 10px; color: #999; margin-top: 2px;">Algo: ${{timeText}}</div>` +
-                            breakdownHtml;
-                    }} 
+                    }} else {{
+                         breakdownHtml = `<div style="font-size: 10px; color: #999; margin-top: 2px;">Algo: ${{timeText}}</div>`;
+                    }}
+                    
+                    // Append Alternative Route Info if available
+                    let altInfo = "";
+                    if (data.alternative_route) {{
+                        let altCost = (data.alternative_route.distance || 0) * 3.6;
+                        let altDist = data.alternative_route.distance_meters || 0;
+                        altInfo = `<div style="margin-top: 8px; border-top: 1px dashed #ccc; padding-top: 4px;">
+                                     <strong style="color: #ff6600;">Alternative:</strong><br>
+                                     ${{formatTime(altCost)}}<br>
+                                     <span style="font-size: 11px; color: #555;">${{formatDist(altDist)}}</span>
+                                   </div>`;
+                    }}
+                    
+                    document.getElementById('disp-time').innerHTML = formatTime(costSeconds) + 
+                        breakdownHtml + altInfo;
                     
                     // DEBUG: Show info in UI
                     document.getElementById('debug-info').innerText = "Points: " + routeCoords.length + " | Cost: " + costSeconds.toFixed(1) + "s | Len: " + (physicalMeters/1000).toFixed(2) + "km";
@@ -822,8 +832,8 @@ html_code = f"""
             const mode = this.value;
             const knnContainer = document.getElementById('knn-container');
             
-            // Only show candidates for KNN mode (m2m_classic_sp)
-            if (mode === 'm2m_classic_sp') {{
+            // Only show candidates for KNN mode (m2m)
+            if (mode === 'm2m') {{
                 knnContainer.style.display = 'block';
             }} else {{
                 knnContainer.style.display = 'none';

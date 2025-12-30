@@ -19,6 +19,22 @@ All algorithms find shortest paths on a **shortcut graph** built from H3 hierarc
    - `inside = -1`: Downward (toward finer cells/higher resolution)
    - `inside = -2`: Base edge (outer-only)
 
+## Unified API Naming
+
+The system exposes a unified set of algorithm names via the Streamlit UI and API to ensure consistency across the Python and C++ engines.
+
+| UI Display Name | API Value | Description | Internal Implementation (C++/Python) |
+|---|---|---|---|
+| **Bidirectional Pruned (Res)** | `pruned` | **Recommended**. Uses resolution-based pruning. | `query_pruned` / `query_bi_lca_res` |
+| **Bidirectional Classic** | `classic` | Standard bidirectional Dijkstra (no pruning). | `query_classic` |
+| **Unidirectional Phase-Based** | `unidirectional` | Unidirectional Phase-Based search. | `query_unidirectional` / `query_uni_lca` |
+| **Bidirectional Phase-Based (LCA)** | `bi_lca` | Pruning based on LCA phases. | `query_bi_lca` (Python only*) |
+| **Dijkstra (Baseline)** | `dijkstra` | Naive Unidirectional Dijkstra. **Slowest**. | `query_dijkstra` / `query_uni_dijkstra` |
+| **Bi-Dijkstra (Baseline)** | `bidijkstra` | Naive Bidirectional Dijkstra. | `query_bidijkstra` / `query_bi_dijkstra` |
+| **Many-to-Many (KNN)** | `m2m` | K-Nearest Neighbors search. | `query_multi` / `query_m2m` |
+
+*\*Note: Phase-Based algorithms map to their Resolution-Based counterparts in the C++ engine if selected.*
+
 ## Algorithm Summary
 
 | # | Name | Type | High Cell | Forward | Backward | Speed |

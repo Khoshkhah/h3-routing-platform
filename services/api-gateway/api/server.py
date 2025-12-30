@@ -319,7 +319,9 @@ async def compute_route(
     search_mode: str = Query("knn", description="Search mode: 'knn', 'one_to_one', or 'one_to_one_v2'"),
     num_candidates: int = Query(3, description="Number of candidates for KNN", ge=1, le=10),
     search_radius: float = Query(2000.0, description="Search radius in meters", ge=10.0, le=10000.0),
-    algorithm: str = Query("pruned", description="Routing algorithm: 'pruned', 'classic', 'unidirectional', 'dijkstra', and _sp variants")
+    algorithm: str = Query("pruned", description="Routing algorithm: 'pruned', 'classic', 'unidirectional', 'dijkstra', and _sp variants"),
+    include_alternative: bool = Query(False, description="Whether to include an alternative route"),
+    penalty_factor: float = Query(2.0, description="Penalty factor for alternative route")
 ):
     """
     Compute a route between Source and Target.
@@ -372,7 +374,9 @@ async def compute_route(
             search_mode=search_mode,
             num_candidates=num_candidates,
             search_radius=search_radius,
-            algorithm=algorithm
+            algorithm=algorithm,
+            include_alternative=include_alternative,
+            penalty_factor=penalty_factor
         )
         
         if not result.success:
@@ -398,7 +402,8 @@ async def compute_route(
             path=result.path,
             geojson=feature,
             timing_breakdown=result.timing_breakdown,
-            debug=result.debug
+            debug=result.debug,
+            alternative_route=result.alternative_route
         )
     
     except Exception as e:
@@ -431,52 +436,60 @@ async def compute_route_post(request: RouteRequest):
     Compute a route via POST. Supports include_alternative parameter.
     Forwards directly to C++ server.
     """
-    # Resolve coordinates
-    src_lat = request.source_lat if request.source_lat is not None else request.start_lat
-    src_lon = request.source_lon if request.source_lon is not None else request.start_lng
-    tgt_lat = request.target_lat if request.target_lat is not None else request.end_lat
-    tgt_lon = request.target_lon if request.target_lon is not None else request.end_lng
-    
-    if any(v is None for v in [src_lat, src_lon, tgt_lat, tgt_lon]):
-        return RouteResponse(success=False, error="Missing coordinate parameters")
-    
     try:
-        # Forward directly to C++ server with include_alternative
-        payload = {
-            "dataset": request.dataset,
-            "start_lat": src_lat,
-            "start_lng": src_lon,
-            "end_lat": tgt_lat,
-            "end_lng": tgt_lon,
-            "mode": request.search_mode,
-            "algorithm": request.algorithm,
-            "num_candidates": request.num_candidates,
-            "search_radius": request.search_radius,
-            "include_alternative": request.include_alternative,
-            "penalty_factor": request.penalty_factor
-        }
+        # Get CH query engine
+        try:
+            ch_engine = ch_factory.get_engine(request.dataset)
+        except KeyError:
+            return RouteResponse(success=False, error=f"Query engine not available for dataset: {request.dataset}")
+
+        # Resolve coordinates
+        src_lat = request.source_lat if request.source_lat is not None else request.start_lat
+        src_lon = request.source_lon if request.source_lon is not None else request.start_lng
+        tgt_lat = request.target_lat if request.target_lat is not None else request.end_lat
+        tgt_lon = request.target_lon if request.target_lon is not None else request.end_lng
+
+        if any(v is None for v in [src_lat, src_lon, tgt_lat, tgt_lon]):
+            return RouteResponse(success=False, error="Missing coordinate parameters")
+
+        # Delegate to engine (handles mapping logic correctly)
+        result = ch_engine.compute_route_latlon(
+            start_lat=src_lat,
+            start_lng=src_lon,
+            end_lat=tgt_lat,
+            end_lng=tgt_lon,
+            search_mode=request.search_mode,
+            num_candidates=request.num_candidates,
+            search_radius=request.search_radius,
+            algorithm=request.algorithm,
+            include_alternative=request.include_alternative,
+            penalty_factor=request.penalty_factor
+        )
         
-        response = requests.post("http://localhost:8082/route", json=payload, timeout=30)
-        data = response.json()
-        
-        if not data.get("success", False):
-            return RouteResponse(success=False, error=data.get("error", "Routing failed"))
-        
-        route = data.get("route", {})
-        
+        if not result.success:
+            return RouteResponse(success=False, error=result.error or "Routing failed")
+            
+        feature = result.geojson
+        if not feature:
+            feature = {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": []},
+                "properties": {"distance": result.distance, "warning": "No geometry returned"}
+            }
+            
         return RouteResponse(
             success=True,
             dataset=request.dataset,
-            distance=route.get("distance"),
-            distance_meters=route.get("distance_meters"),
-            runtime_ms=route.get("runtime_ms"),
-            path=route.get("path"),
-            geojson=route.get("geojson"),
-            timing_breakdown=data.get("timing_breakdown"),
-            debug=data.get("debug"),
-            alternative_route=data.get("alternative_route")
+            distance=result.distance,
+            distance_meters=result.distance_meters,
+            runtime_ms=result.runtime_ms,
+            path=result.path,
+            geojson=feature,
+            timing_breakdown=result.timing_breakdown,
+            debug=result.debug,
+            alternative_route=result.alternative_route
         )
-    
+
     except Exception as e:
         logger.error(f"Error computing route: {e}", exc_info=True)
         return RouteResponse(success=False, error=f"Internal server error: {str(e)}")

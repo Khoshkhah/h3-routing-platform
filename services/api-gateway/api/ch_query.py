@@ -20,6 +20,7 @@ class QueryResult:
     geojson: Optional[dict] = None  # Add GeoJSON support
     timing_breakdown: Optional[dict] = None
     debug: Optional[dict] = None
+    alternative_route: Optional[dict] = None
     error: Optional[str] = None
 
 
@@ -74,34 +75,49 @@ class CHQueryEngine:
         search_mode: str = "knn",
         num_candidates: int = 3,
         search_radius: float = 100.0,
-        algorithm: str = "pruned"
+        algorithm: str = "pruned",
+        **kwargs
     ) -> QueryResult:
         """
         Compute route using the routing server's full stack (NN + CH).
         """
-        # Map new _sp algorithm names to backend names
+        # Map new standardized algorithm names to backend names
         ALGORITHM_MAP = {
-            "dijkstra_sp": ("one_to_one", "dijkstra", 1),
-            "bi_dijkstra_sp": ("one_to_one", "bidijkstra", 1),
-            "bi_classic_sp": ("one_to_one", "classic", 1),
-            "bi_lca_res_sp": ("one_to_one", "pruned", 1),
-            "bi_lca_sp": ("one_to_one", "pruned", 1),  # Fallback to pruned until C++ port
-            "uni_lca_sp": ("one_to_one", "unidirectional", 1),
-            "m2m_classic_sp": ("knn", "classic", num_candidates),
+            "dijkstra": ("one_to_one", "dijkstra", 1),
+            "bidijkstra": ("one_to_one", "bidijkstra", 1),
+            "unidirectional": ("one_to_one", "unidirectional", 1),
+            "pruned": ("one_to_one", "pruned", 1),
+            "classic": ("one_to_one", "classic", 1),
+            "bi_lca": ("one_to_one", "pruned", 1),
+            "m2m": ("knn", "classic", None),
         }
         
-        if search_mode in ALGORITHM_MAP:
-            search_mode, algorithm, num_candidates = ALGORITHM_MAP[search_mode]
-        # Legacy support for old names
-        elif search_mode == "one_to_one":
-            num_candidates = 1
+        target_mode = search_mode
+        target_algo = algorithm
+        target_candidates = num_candidates
+
+        # If the algorithm name is in the map, use its specific mode/algo/candidates
+        if target_algo in ALGORITHM_MAP:
+            mapped_mode, mapped_algo, mapped_candidates = ALGORITHM_MAP[target_algo]
+            target_mode = mapped_mode
+            target_algo = mapped_algo
+            if mapped_candidates is not None:
+                target_candidates = mapped_candidates
+        # Fallback to search_mode mapping
+        elif target_mode in ALGORITHM_MAP:
+            mapped_mode, mapped_algo, mapped_candidates = ALGORITHM_MAP[target_mode]
+            target_mode = mapped_mode
+            target_algo = mapped_algo
+            if mapped_candidates is not None:
+                target_candidates = mapped_candidates
+        
+        # Override algorithm if search_mode is one of the classic ones
+        if search_mode == "one_to_one":
+            target_mode = "one_to_one"
+            target_candidates = 1
         elif search_mode == "one_to_one_v2":
-            num_candidates = 1
-            if algorithm == "pruned": algorithm = "pruned"
-        elif search_mode == "dijkstra":
-            search_mode = "one_to_one"
-            num_candidates = 1
-            algorithm = "dijkstra"
+            target_mode = "one_to_one_v2"
+            target_candidates = 1
             
         try:
             payload = {
@@ -110,10 +126,12 @@ class CHQueryEngine:
                 "start_lng": start_lng,
                 "end_lat": end_lat,
                 "end_lng": end_lng,
-                "mode": search_mode,
-                "algorithm": algorithm,
-                "num_candidates": num_candidates,
-                "search_radius": search_radius
+                "mode": target_mode,
+                "algorithm": target_algo,
+                "num_candidates": target_candidates,
+                "search_radius": search_radius,
+                "include_alternative": kwargs.get("include_alternative", False),
+                "penalty_factor": kwargs.get("penalty_factor", 2.0)
             }
             
             t0 = time.time()
@@ -154,7 +172,8 @@ class CHQueryEngine:
                 geojson=route_details.get("geojson"),
                 runtime_ms=route_details.get("runtime_ms") or client_side_ms,
                 timing_breakdown=data.get("timing_breakdown") or route_container.get("timing_breakdown"),
-                debug=data.get("debug")  # debug is at top level of response
+                debug=data.get("debug"),
+                alternative_route=data.get("alternative_route")
             )
         except Exception as e:
             logger.error(f"Routing request failed: {e}")

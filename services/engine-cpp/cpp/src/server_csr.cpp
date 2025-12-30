@@ -551,6 +551,8 @@ int main(int argc, char* argv[]) {
             double radius = 500.0;
             std::string algorithm = "pruned";
             std::string mode = "knn";
+            bool include_alternative = false;
+            double penalty_factor = 2.0;
             
             if (req.method == "GET"_method) {
                 // GET parameters
@@ -579,6 +581,8 @@ int main(int argc, char* argv[]) {
                 radius = body.value("search_radius", body.value("radius", 500.0));
                 algorithm = body.value("algorithm", "pruned");
                 mode = body.value("mode", body.value("search_mode", "knn"));
+                include_alternative = body.value("include_alternative", false);
+                penalty_factor = body.value("penalty_factor", 2.0);
             }
             
             // Check expand param (default true for backward compatibility)
@@ -723,12 +727,9 @@ int main(int argc, char* argv[]) {
                 };
                 
                 // Alternative route if requested
-                bool include_alternative = false;
-                double penalty_factor = 2.0;
+                // Alternative route if requested
                 if (req.method == "POST"_method) {
-                    auto body = json::parse(req.body);
-                    include_alternative = body.value("include_alternative", false);
-                    penalty_factor = body.value("penalty_factor", 2.0);
+                     // Params already parsed above
                 }
                 
                 if (include_alternative && !expanded_path.empty()) {
@@ -768,6 +769,8 @@ int main(int argc, char* argv[]) {
                 response["runtime_ms"] = runtime_ms;
             }
             
+
+
             return crow::response(200, response.dump());
             
         } catch (const std::exception& e) {

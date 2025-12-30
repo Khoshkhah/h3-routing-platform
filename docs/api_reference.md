@@ -14,7 +14,7 @@ Finds the shortest path between two coordinate pairs using the platform's routin
 | `start_lat`, `start_lng` | float | Coordinates of the origin point. |
 | `end_lat`, `end_lng` | float | Coordinates of the destination point. |
 | `mode` | string | Search strategy: `knn`, `radius`, `one_to_one`, `one_to_one_v2`. |
-| `algorithm` | string | Algorithm: `bi_classic_sp`, `bi_dijkstra_sp`, `bi_lca_res_sp`, `m2m_classic_sp`, etc. |
+| `algorithm` | string | Algorithm: `pruned`, `classic`, `unidirectional`, `bi_lca`, `dijkstra`, `bidijkstra`, `m2m`. |
 | `num_candidates` | integer | Number of nearest edges to consider (for `knn` mode). |
 | `include_alternative` | boolean | If `true`, also compute an alternative route (default: `false`). |
 | `penalty_factor` | float | Penalty multiplier for alternative route nodes (default: `2.0`). |
