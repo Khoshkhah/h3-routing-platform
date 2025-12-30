@@ -41,31 +41,34 @@ MAX_WORKERS = min(4, cpu_count())  # Limit parallelism to avoid memory issues
 def process_chunk_phase1(args):
     """
     Worker function for Phase 1 parallel processing.
-    Uses in-memory DuckDB. Receives data as DataFrames.
-    Returns: (chunk_id, active_shortcuts_df, deactivated_shortcuts_df, active_count, timing_info)
+    Reads data from Parquet files, processes in in-memory DuckDB.
+    Writes results to Parquet files to avoid large DataFrame IPC.
+    Returns: (chunk_id, active_path, deactivated_path, active_count, timing_info, duration)
     """
-    chunk_id, edges_df, shortcuts_df, partition_res, sp_method, hybrid_res = args
-    
-    # Each worker uses in-memory DuckDB
-    con = duckdb.connect(":memory:")
-    
-    # Register H3 UDFs
-    con.create_function("h3_lca", utils._find_lca_impl, ["BIGINT", "BIGINT"], "BIGINT")
-    con.create_function("h3_resolution", utils._find_resolution_impl, ["BIGINT"], "INTEGER")
-    con.create_function("h3_parent", utils._get_parent_cell_impl, ["BIGINT", "INTEGER"], "BIGINT")
+    chunk_id, shortcuts_parquet_path, edges_parquet_path, temp_dir, partition_res, sp_method, hybrid_res = args
     
     timing_info = []  # List of (res, method, time)
     start_time = time.time()
+    active_path = f"{temp_dir}/phase1_active_{chunk_id}.parquet"
+    deactivated_path = f"{temp_dir}/phase1_deactivated_{chunk_id}.parquet"
     
     try:
-        # Load edges into worker's in-memory DB
-        con.execute("CREATE TABLE edges AS SELECT * FROM edges_df")
+        # Worker uses in-memory DuckDB
+        con = duckdb.connect(":memory:")
         
-        if len(shortcuts_df) == 0:
+        # Register H3 UDFs
+        con.create_function("h3_lca", utils._find_lca_impl, ["BIGINT", "BIGINT"], "BIGINT")
+        con.create_function("h3_resolution", utils._find_resolution_impl, ["BIGINT"], "INTEGER")
+        con.create_function("h3_parent", utils._get_parent_cell_impl, ["BIGINT", "INTEGER"], "BIGINT")
+        
+        # Load data from Parquet files
+        con.execute(f"CREATE TABLE edges AS SELECT * FROM '{edges_parquet_path}'")
+        con.execute(f"CREATE TABLE shortcuts AS SELECT * FROM '{shortcuts_parquet_path}'")
+        
+        initial_count = con.execute("SELECT count(*) FROM shortcuts").fetchone()[0]
+        if initial_count == 0:
+            con.close()
             return (chunk_id, None, None, 0, [], time.time() - start_time)
-        
-        # Create table for processing
-        con.execute("CREATE TABLE shortcuts AS SELECT * FROM shortcuts_df")
         
         # Create table to collect deactivated shortcuts
         con.execute("""
@@ -76,39 +79,32 @@ def process_chunk_phase1(args):
             )
         """)
         
-
-        # ... (rest of function unchanged, just returning duration at end)
-        
         for res in range(15, partition_res - 1, -1):
             res_start = time.time()
-
             
             _assign_cell_to_shortcuts_worker(con, res, "shortcuts")
             
             # Expand from current_cell_in/out to current_cell
             con.execute("""
                 CREATE OR REPLACE TABLE shortcuts_expanded AS
-                -- Inner cell (always include if not null)
                 SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, 
                        inner_res, outer_res, current_cell_in AS current_cell
                 FROM shortcuts
                 WHERE current_cell_in IS NOT NULL
                 UNION
-                -- Outer cell (only if different from inner)
                 SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, 
                        inner_res, outer_res, current_cell_out AS current_cell
                 FROM shortcuts
                 WHERE current_cell_out IS NOT NULL 
                   AND (current_cell_in IS NULL OR current_cell_out != current_cell_in)
                 UNION ALL
-                -- Inactive (both NULL)
                 SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, 
                        inner_res, outer_res, NULL AS current_cell
                 FROM shortcuts
                 WHERE current_cell_in IS NULL AND current_cell_out IS NULL
             """)
             
-            # Collect deactivated shortcuts (NULL current_cell)
+            # Collect deactivated shortcuts
             con.execute("""
                 INSERT INTO deactivated
                 SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, inner_res, outer_res
@@ -120,62 +116,76 @@ def process_chunk_phase1(args):
             con.execute("DROP TABLE IF EXISTS shortcuts_expanded")
             
             active_count = con.execute("SELECT count(*) FROM shortcuts").fetchone()[0]
-            
             if active_count == 0:
                 break
             
-            # Determine method for this resolution
+            # Determine method
             if sp_method == "HYBRID":
                 method = "PURE" if res >= hybrid_res else "SCIPY"
             else:
                 method = sp_method
             
-            # Run SP on active shortcuts
+            # Run SP
             _run_shortest_paths_worker(con, "shortcuts", method=method)
             
             res_time = time.time() - res_start
             timing_info.append((res, method, res_time))
         
-        # Get final results
-        active_df = con.execute("SELECT * FROM shortcuts").df()
-        deactivated_df = con.execute("SELECT * FROM deactivated").df()
+        # Write results to Parquet files
+        active_count = con.execute("SELECT count(*) FROM shortcuts").fetchone()[0]
+        deactivated_count = con.execute("SELECT count(*) FROM deactivated").fetchone()[0]
         
-        return (chunk_id, active_df, deactivated_df, len(active_df), timing_info, time.time() - start_time)
+        if active_count > 0:
+            con.execute(f"COPY shortcuts TO '{active_path}' (FORMAT PARQUET)")
+        else:
+            active_path = None
+            
+        if deactivated_count > 0:
+            con.execute(f"COPY deactivated TO '{deactivated_path}' (FORMAT PARQUET)")
+        else:
+            deactivated_path = None
+        
+        con.close()
+        return (chunk_id, active_path, deactivated_path, active_count, timing_info, time.time() - start_time)
     
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return (chunk_id, None, None, 0, [])
-    finally:
-        con.close()
+        return (chunk_id, None, None, 0, [], time.time() - start_time)
+
 
 
 
 def process_chunk_phase4(args):
     """
     Worker function for Phase 4 parallel processing.
-    Uses in-memory DuckDB. Receives data as DataFrames.
-    Returns: (cell_id, shortcuts_df, count, timing_info, duration)
+    Reads data from Parquet files, processes in in-memory DuckDB.
+    Writes results to Parquet file to avoid large DataFrame IPC.
+    Returns: (cell_id, result_path, count, timing_info, duration)
     """
-    cell_id, edges_df, cell_df, partition_res, sp_method, hybrid_res = args
-    
-    # Each worker uses in-memory DuckDB
-    con = duckdb.connect(":memory:")
-    
-    # Register H3 UDFs
-    con.create_function("h3_lca", utils._find_lca_impl, ["BIGINT", "BIGINT"], "BIGINT")
-    con.create_function("h3_resolution", utils._find_resolution_impl, ["BIGINT"], "INTEGER")
-    con.create_function("h3_parent", utils._get_parent_cell_impl, ["BIGINT", "INTEGER"], "BIGINT")
+    cell_id, cell_parquet_path, edges_parquet_path, temp_dir, partition_res, sp_method, hybrid_res = args
     
     timing_info = []  # List of (res, method, time)
     start_time = time.time()
+    result_path = f"{temp_dir}/phase4_result_{cell_id}.parquet"
     
     try:
-        # Load edges into worker's in-memory DB
-        con.execute("CREATE TABLE edges AS SELECT * FROM edges_df")
+        # Worker uses in-memory DuckDB for processing
+        con = duckdb.connect(":memory:")
         
-        # Load cell data
-        con.execute("CREATE TABLE cell_data AS SELECT * FROM cell_df")
+        # Register H3 UDFs
+        con.create_function("h3_lca", utils._find_lca_impl, ["BIGINT", "BIGINT"], "BIGINT")
+        con.create_function("h3_resolution", utils._find_resolution_impl, ["BIGINT"], "INTEGER")
+        con.create_function("h3_parent", utils._get_parent_cell_impl, ["BIGINT", "INTEGER"], "BIGINT")
+        
+        # Load data directly from Parquet files (no DB connection needed)
+        con.execute(f"CREATE TABLE edges AS SELECT * FROM '{edges_parquet_path}'")
+        con.execute(f"CREATE TABLE cell_data AS SELECT * FROM '{cell_parquet_path}'")
+        
+        initial_count = con.execute("SELECT count(*) FROM cell_data").fetchone()[0]
+        if initial_count == 0:
+            con.close()
+            return (cell_id, None, 0, [], time.time() - start_time)
         
         # Create table to collect deactivated shortcuts
         con.execute("""
@@ -186,12 +196,9 @@ def process_chunk_phase4(args):
             )
         """)
         
-        initial_count = len(cell_df)
-        
         # Iterative backward loop: partition_res -> 15
         for res in range(partition_res, 16):
             # First: Deactivate shortcuts where res > max(inner_res, outer_res)
-            # These shortcuts have reached their finest granularity
             con.execute(f"""
                 INSERT INTO deactivated
                 SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, 
@@ -234,18 +241,21 @@ def process_chunk_phase4(args):
             FROM cell_data
         """)
         
-        # Get final result - all deactivated shortcuts
-        result_df = con.execute("SELECT * FROM deactivated").df()
-        final_count = len(result_df)
+        # Get final count and write to Parquet (avoids large DataFrame IPC)
+        final_count = con.execute("SELECT count(*) FROM deactivated").fetchone()[0]
         
-        return (cell_id, result_df, final_count, timing_info, time.time() - start_time)
+        if final_count > 0:
+            con.execute(f"COPY deactivated TO '{result_path}' (FORMAT PARQUET)")
+        else:
+            result_path = None
+        
+        con.close()
+        return (cell_id, result_path, final_count, timing_info, time.time() - start_time)
     
     except Exception as e:
         import traceback
         traceback.print_exc()
         return (cell_id, None, 0, [], time.time() - start_time)
-    finally:
-        con.close()
 
 
 def _assign_cell_to_shortcuts_worker(con, res: int, input_table: str):
@@ -285,70 +295,6 @@ def _assign_cell_to_shortcuts_worker(con, res: int, input_table: str):
     con.execute(f"ALTER TABLE {input_table}_tmp RENAME TO {input_table}")
 
 
-def _process_cell_forward_worker(con, table_name: str):
-    """
-    Worker version of process_cell_forward.
-    Expands current_cell_in/out to single current_cell column first.
-    """
-    # Step 1: Expand from current_cell_in/out to current_cell
-    con.execute(f"DROP TABLE IF EXISTS {table_name}_expanded")
-    con.execute(f"""
-        CREATE TABLE {table_name}_expanded AS
-        -- Inner cell (always include if not null)
-        SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, 
-               inner_res, outer_res, current_cell_in AS current_cell
-        FROM {table_name}
-        WHERE current_cell_in IS NOT NULL
-        UNION
-        -- Outer cell (only if different from inner)
-        SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, 
-               inner_res, outer_res, current_cell_out AS current_cell
-        FROM {table_name}
-        WHERE current_cell_out IS NOT NULL 
-          AND (current_cell_in IS NULL OR current_cell_out != current_cell_in)
-        UNION ALL
-        -- Inactive (both NULL)
-        SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, 
-               inner_res, outer_res, NULL AS current_cell
-        FROM {table_name}
-        WHERE current_cell_in IS NULL AND current_cell_out IS NULL
-    """)
-    
-    # Step 2: Separate active and deactivated
-    con.execute(f"""
-        CREATE OR REPLACE TABLE shortcuts_to_process AS
-        SELECT * FROM {table_name}_expanded WHERE current_cell IS NOT NULL
-    """)
-    
-    active_count = con.execute("SELECT count(*) FROM shortcuts_to_process").fetchone()[0]
-    
-    if active_count > 0:
-        # Run SP on active shortcuts
-        _run_shortest_paths_worker(con, "shortcuts_to_process")
-        
-        # Replace original table (without current_cell)
-        con.execute(f"DROP TABLE IF EXISTS {table_name}")
-        con.execute(f"DROP TABLE IF EXISTS {table_name}_expanded")
-        con.execute(f"""
-            CREATE TABLE {table_name} AS
-            SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, inner_res, outer_res
-            FROM shortcuts_to_process
-        """)
-        new_count = con.execute(f"SELECT count(*) FROM {table_name}").fetchone()[0]
-    else:
-        con.execute(f"DROP TABLE IF EXISTS {table_name}")
-        con.execute(f"DROP TABLE IF EXISTS {table_name}_expanded")
-        con.execute(f"""
-            CREATE TABLE {table_name} (
-                from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER,
-                lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, 
-                inner_res TINYINT, outer_res TINYINT
-            )
-        """)
-        new_count = 0
-    
-    con.execute("DROP TABLE IF EXISTS shortcuts_to_process")
-    return active_count, new_count
 
 
 def _process_cell_forward_worker(con, table_name: str, method: str = "SCIPY", num_workers: int = 1):
@@ -605,8 +551,7 @@ def _run_shortest_paths_worker(con, input_table: str, method: str = "SCIPY", num
                 h3_lca(e1.to_cell, e2.from_cell)::BIGINT as inner_cell,
                 h3_lca(e1.from_cell, e2.to_cell)::BIGINT as outer_cell,
                 h3_resolution(h3_lca(e1.to_cell, e2.from_cell))::TINYINT as inner_res,
-                h3_resolution(h3_lca(e1.from_cell, e2.to_cell))::TINYINT as outer_res,
-        
+                h3_resolution(h3_lca(e1.from_cell, e2.to_cell))::TINYINT as outer_res
             FROM shortcuts_next s
             LEFT JOIN edges e1 ON s.from_edge = e1.id
             LEFT JOIN edges e2 ON s.to_edge = e2.id
@@ -717,11 +662,23 @@ class ParallelShortcutProcessor:
     def process_forward_phase1_parallel(self):
         """
         PARALLEL Phase 1: Process chunks concurrently using multiprocessing.
-        Workers use in-memory DBs with data passed as DataFrames.
+        Workers read from Parquet files, write results to Parquet.
+        No DataFrame IPC - all data exchange via disk files.
         """
         log_conf.log_section(logger, f"PHASE 1: PARALLEL FORWARD (15 -> {self.partition_res})")
         
-        # Identify chunks
+        # Create temp directory for Parquet files
+        temp_dir = Path(self.db_path).parent / "phase1_temp"
+        temp_dir.mkdir(exist_ok=True)
+        
+        log_memory(logger, "Phase 1: Starting")
+        
+        # Export edges to Parquet (shared by all workers)
+        edges_parquet_path = str(temp_dir / "edges.parquet")
+        self.con.execute(f"COPY edges TO '{edges_parquet_path}' (FORMAT PARQUET)")
+        log_memory(logger, "Phase 1: Edges exported to Parquet")
+        
+        # Identify chunks via SQL
         self.con.execute(f"""
             CREATE OR REPLACE TABLE chunks AS
             SELECT DISTINCT h3_parent(c, {self.partition_res}) as cell_id
@@ -733,149 +690,118 @@ class ParallelShortcutProcessor:
             WHERE c != 0
         """)
         chunk_ids = [r[0] for r in self.con.execute("SELECT cell_id FROM chunks").fetchall()]
+        log_memory(logger, f"Phase 1: {len(chunk_ids)} chunks identified")
         
-        log_memory(logger, "Phase 1: Chunk IDs identified")
-        
-        # Load edges once - shared by all workers
-        edges_df = self.con.execute("SELECT * FROM edges").df()
-        
-        log_memory(logger, f"Phase 1: Edges loaded ({len(edges_df)} rows)")
-
-        
-        # Prepare args for workers - vectorized approach
-        log_memory(logger, "Phase 1: Fetching all shortcuts for vectorization")
-        
-        # 1. Fetch all shortcuts with necessary columns
-        all_shortcuts_df = self.con.execute(f"""
+        # Add parent columns to elementary_table for efficient SQL grouping
+        self.con.execute(f"""
+            CREATE OR REPLACE TABLE shortcuts_with_parents AS
             SELECT *, 
                    h3_parent(inner_cell, {self.partition_res}) as inner_parent,
                    h3_parent(outer_cell, {self.partition_res}) as outer_parent
             FROM {self.elementary_table}
-        """).df()
+        """)
         
-        log_memory(logger, f"Phase 1: All shortcuts fetched ({len(all_shortcuts_df)} rows)")
-        
-        # 2. Group by parents
-        # We need shortcuts where inner_parent == chunk_id OR outer_parent == chunk_id
-        
-        # Create a mapping of chunk_id -> list of indices
-        from collections import defaultdict
-        chunk_indices = defaultdict(list)
-        
-        # Inner parents
-        for chunk_id, group_indices in all_shortcuts_df.groupby('inner_parent').groups.items():
-            if chunk_id != 0: # Filter global
-                chunk_indices[chunk_id].extend(group_indices)
-                
-        # Outer parents (only if differs from inner to avoid duplicates if we just concat)
-        # Actually, simpler approach:
-        # For each chunk, we mask the DF. But that is O(N * C).
-        # Better: 
-        # inner_groups = all_shortcuts_df.groupby('inner_parent')
-        # outer_groups = all_shortcuts_df.groupby('outer_parent')
-        
-        # Optimal: Pre-calculate indices for each chunk
-        # Re-using the groups approach
-        
-        args_list = []
-        
-        # Convert to more efficient lookup if needed, but simple group iteration is fast
-        # Let's iterate over the known chunks
-        
-        inner_groups = all_shortcuts_df.groupby('inner_parent')
-        outer_groups = all_shortcuts_df.groupby('outer_parent')
+        # Export per-chunk Parquet files via SQL (no pandas!)
+        chunk_parquet_files = {}  # chunk_id -> parquet_path
+        t_export = time.time()
         
         for chunk_id in chunk_ids:
-            parts = []
-            if chunk_id in inner_groups.groups:
-                parts.append(inner_groups.get_group(chunk_id))
-            
-            if chunk_id in outer_groups.groups:
-                # We need to be careful not to duplicate if inner_parent == outer_parent == chunk_id
-                # The query was: inner_parent = id OR outer_parent = id
-                
-                # If we get the outer group, we should filter out those where inner_parent also equals chunk_id
-                # to avoid double counting if we blindly concatenated.
-                # However, get_group returns a view/copy.
-                
-                outer_part = outer_groups.get_group(chunk_id)
-                # Only include rows where inner_parent != chunk_id (since those are already in parts[0])
-                outer_part = outer_part[outer_part['inner_parent'] != chunk_id]
-                
-                if not outer_part.empty:
-                    parts.append(outer_part)
-            
-            if parts:
-                shortcuts_df = pd.concat(parts)
-                # Drop helper columns to match expected schema
-                shortcuts_df = shortcuts_df.drop(columns=['inner_parent', 'outer_parent'])
-                args_list.append((chunk_id, edges_df, shortcuts_df, self.partition_res, self.sp_method, self.hybrid_res))
-
+            chunk_path = str(temp_dir / f"chunk_{chunk_id}.parquet")
+            # Get shortcuts where inner_parent OR outer_parent matches chunk_id
+            self.con.execute(f"""
+                COPY (
+                    SELECT from_edge, to_edge, cost, via_edge, lca_res, 
+                           inner_cell, outer_cell, inner_res, outer_res, current_cell
+                    FROM shortcuts_with_parents
+                    WHERE inner_parent = {chunk_id} OR outer_parent = {chunk_id}
+                ) TO '{chunk_path}' (FORMAT PARQUET)
+            """)
+            chunk_parquet_files[chunk_id] = chunk_path
         
-        log_memory(logger, f"Phase 1: Args prepared for {len(chunk_ids)} chunks")
-
+        # Drop temp table
+        self.con.execute("DROP TABLE IF EXISTS shortcuts_with_parents")
+        
+        log_memory(logger, f"Phase 1: Exported {len(chunk_ids)} chunk Parquet files in {time.time() - t_export:.1f}s")
         
         res_partition_cells = []
         total_deactivated = 0
-        all_timing_info = []  # Collect timing from all workers
+        all_timing_info = []
         
         num_workers = self.workers.get('phase1', MAX_WORKERS)
         
         if num_workers > 1:
             logger.info(f"  Processing {len(chunk_ids)} chunks in parallel (max {num_workers} workers)...")
             with ProcessPoolExecutor(max_workers=num_workers) as executor:
-                futures = {executor.submit(process_chunk_phase1, args): args[0] for args in args_list}
+                # Submit futures with Parquet paths
+                futures = {}
+                for chunk_id in chunk_ids:
+                    if chunk_id in chunk_parquet_files:
+                        future = executor.submit(process_chunk_phase1, 
+                            (chunk_id, chunk_parquet_files[chunk_id], edges_parquet_path, 
+                             str(temp_dir), self.partition_res, self.sp_method, self.hybrid_res))
+                        futures[future] = chunk_id
                 
                 for i, future in enumerate(as_completed(futures), 1):
-                    chunk_id, active_df, deactivated_df, count, timing_info, duration = future.result()
+                    chunk_id, active_path, deactivated_path, count, timing_info, duration = future.result()
                     all_timing_info.extend(timing_info)
                     
-                    # Save active shortcuts to cell table
-                    if active_df is not None and len(active_df) > 0:
-                        self.con.execute(f"CREATE OR REPLACE TABLE cell_{chunk_id} AS SELECT * FROM active_df")
+                    # Insert results from Parquet files
+                    if active_path and Path(active_path).exists():
+                        self.con.execute(f"CREATE OR REPLACE TABLE cell_{chunk_id} AS SELECT * FROM '{active_path}'")
                         res_partition_cells.append(chunk_id)
+                        Path(active_path).unlink()
                     
-                    # Save deactivated shortcuts to forward_deactivated_table
-                    if deactivated_df is not None and len(deactivated_df) > 0:
+                    if deactivated_path and Path(deactivated_path).exists():
+                        deact_count = self.con.execute(f"SELECT count(*) FROM '{deactivated_path}'").fetchone()[0]
                         self.con.execute(f"""
                             INSERT INTO {self.forward_deactivated_table}
-                            SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, inner_res, outer_res
-                            FROM deactivated_df
+                            SELECT * FROM '{deactivated_path}'
                         """)
-                        total_deactivated += len(deactivated_df)
+                        total_deactivated += deact_count
+                        Path(deactivated_path).unlink()
                     
-                    logger.info(f"  [{i}/{len(chunk_ids)}] Chunk {chunk_id} complete in {duration:.2f}s. {count} active, {len(deactivated_df) if deactivated_df is not None else 0} deactivated")
+                    # Delete input chunk Parquet file
+                    if chunk_id in chunk_parquet_files and Path(chunk_parquet_files[chunk_id]).exists():
+                        Path(chunk_parquet_files[chunk_id]).unlink()
                     
-                    # Memory cleanup after each worker
-                    del active_df, deactivated_df
-                    gc.collect()
-
+                    logger.info(f"  [{i}/{len(chunk_ids)}] Chunk {chunk_id} complete in {duration:.2f}s. {count} active")
         else:
             logger.info(f"  Processing {len(chunk_ids)} chunks sequentially...")
-            for i, args in enumerate(args_list, 1):
-                chunk_id, active_df, deactivated_df, count, timing_info, duration = process_chunk_phase1(args)
+            for i, chunk_id in enumerate(chunk_ids, 1):
+                if chunk_id not in chunk_parquet_files:
+                    continue
+                    
+                args = (chunk_id, chunk_parquet_files[chunk_id], edges_parquet_path, 
+                        str(temp_dir), self.partition_res, self.sp_method, self.hybrid_res)
+                chunk_id, active_path, deactivated_path, count, timing_info, duration = process_chunk_phase1(args)
                 all_timing_info.extend(timing_info)
                 
-                if active_df is not None and len(active_df) > 0:
-                    self.con.execute(f"CREATE OR REPLACE TABLE cell_{chunk_id} AS SELECT * FROM active_df")
+                if active_path and Path(active_path).exists():
+                    self.con.execute(f"CREATE OR REPLACE TABLE cell_{chunk_id} AS SELECT * FROM '{active_path}'")
                     res_partition_cells.append(chunk_id)
+                    Path(active_path).unlink()
                 
-                if deactivated_df is not None and len(deactivated_df) > 0:
+                if deactivated_path and Path(deactivated_path).exists():
+                    deact_count = self.con.execute(f"SELECT count(*) FROM '{deactivated_path}'").fetchone()[0]
                     self.con.execute(f"""
                         INSERT INTO {self.forward_deactivated_table}
-                        SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, inner_res, outer_res
-                        FROM deactivated_df
+                        SELECT * FROM '{deactivated_path}'
                     """)
-                    total_deactivated += len(deactivated_df)
+                    total_deactivated += deact_count
+                    Path(deactivated_path).unlink()
                 
-                logger.info(f"  [{i}/{len(chunk_ids)}] Chunk {chunk_id} complete in {duration:.2f}s. {count} active, {len(deactivated_df) if deactivated_df is not None else 0} deactivated")
+                # Delete input chunk Parquet file
+                if Path(chunk_parquet_files[chunk_id]).exists():
+                    Path(chunk_parquet_files[chunk_id]).unlink()
                 
-                # Memory cleanup after each worker
-                del active_df, deactivated_df
-                gc.collect()
-
+                logger.info(f"  [{i}/{len(chunk_ids)}] Chunk {chunk_id} complete in {duration:.2f}s. {count} active")
         
-        # Log PURE vs SCIPY timing summary
+        # Cleanup temp directory
+        import shutil
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        
+        # Log timing summary
         if all_timing_info:
             pure_times = [t for res, method, t in all_timing_info if method == "PURE"]
             scipy_times = [t for res, method, t in all_timing_info if method == "SCIPY"]
@@ -886,11 +812,8 @@ class ParallelShortcutProcessor:
         
         logger.info(f"  Total deactivated from Phase 1: {total_deactivated}")
         
-        # Clean up large DataFrames
-        del edges_df, all_shortcuts_df, args_list
-        gc.collect()
-        
         self.current_cells = res_partition_cells
+        gc.collect()
         return res_partition_cells
 
     def process_forward_phase2_consolidation(self):
@@ -980,7 +903,9 @@ class ParallelShortcutProcessor:
         total_forward = self.con.sql(f"SELECT count(*) FROM {self.forward_deactivated_table}").fetchone()[0]
         
         # Stream dedup directly to Parquet (no temp table in memory)
-        parquet_path = str(Path(self.db_path).parent / "forward_deactivated.parquet")
+        # Use district name from db_path for unique checkpoint file
+        district_name = Path(self.db_path).stem  # e.g., "burnaby" from "burnaby.db"
+        parquet_path = str(Path(self.db_path).parent / f"{district_name}_forward_deactivated.parquet")
         self.con.execute(f"""
             COPY (
                 SELECT 
@@ -1012,80 +937,116 @@ class ParallelShortcutProcessor:
     def process_backward_phase4_parallel(self):
         """
         PARALLEL Phase 4: Process cells concurrently using multiprocessing.
-        Workers use in-memory DBs with data passed as DataFrames.
+        Workers read from persistent DB (read-only) and write results to Parquet.
+        Main process inserts from Parquet files - eliminates large DataFrame IPC.
         """
         log_conf.log_section(logger, f"PHASE 4: PARALLEL BACKWARD ({self.partition_res} -> 15)")
-        # Load edges once - shared by all workers
-        edges_df = self.con.execute("SELECT * FROM edges").df()
         
-        # Count total shortcuts (without loading into memory)
+        # Create temp directory for Parquet results
+        temp_dir = Path(self.db_path).parent / "phase4_temp"
+        temp_dir.mkdir(exist_ok=True)
+        
+        # Use cell Parquet files from Phase 3
         cell_ids = self.current_cells
         total_shortcuts = sum(
-            self.con.execute(f"SELECT count(*) FROM cell_{cell_id}").fetchone()[0]
-            for cell_id in cell_ids
-        )
+            self.con.execute(f"SELECT count(*) FROM '{path}'").fetchone()[0]
+            for path in self.cell_parquet_files.values()
+        ) if hasattr(self, 'cell_parquet_files') else 0
         
         total_deactivated = self.con.execute(f"SELECT count(*) FROM {self.backward_deactivated_table}").fetchone()[0]
         all_timing_info = []  # Collect timing from all workers
         
         num_workers = self.workers.get('phase4', MAX_WORKERS)
+        checkpoint_interval = 10  # Checkpoint every N cells instead of every cell
         
         if num_workers > 1:
             logger.info(f"  Starting with {len(cell_ids)} cells ({total_shortcuts} shortcuts), max {num_workers} workers...")
             with ProcessPoolExecutor(max_workers=num_workers) as executor:
-                # Submit futures incrementally - load cell data only when submitting
+                # Submit futures - pass Parquet file paths
                 futures = {}
                 for cell_id in cell_ids:
-                    cell_df = self.con.execute(f"SELECT * FROM cell_{cell_id}").df()
-                    if len(cell_df) > 0:
-                        future = executor.submit(process_chunk_phase4, (cell_id, edges_df, cell_df, self.partition_res, self.sp_method, self.hybrid_res))
+                    if cell_id in self.cell_parquet_files:
+                        cell_parquet = self.cell_parquet_files[cell_id]
+                        future = executor.submit(process_chunk_phase4, 
+                            (cell_id, cell_parquet, self.edges_parquet_path, str(temp_dir), 
+                             self.partition_res, self.sp_method, self.hybrid_res))
                         futures[future] = cell_id
-                    del cell_df  # Free immediately after submit
                 
                 for i, future in enumerate(as_completed(futures), 1):
-                    cell_id, result_df, count, timing_info, duration = future.result()
+                    cell_id, result_path, count, timing_info, duration = future.result()
                     all_timing_info.extend(timing_info)
                     
-                    if result_df is not None and len(result_df) > 0:
-                        # Insert into backward_deactivated
+                    # Insert from Parquet file (already on disk, no IPC overhead)
+                    if result_path and count > 0 and Path(result_path).exists():
                         self.con.execute(f"""
                             INSERT INTO {self.backward_deactivated_table}
-                            SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, inner_res, outer_res
-                            FROM result_df
+                            SELECT * FROM '{result_path}'
                         """)
                         total_deactivated += count
+                        Path(result_path).unlink()  # Delete temp result Parquet file
                     
-                    # Drop cell table and cleanup memory
-                    self.con.execute(f"DROP TABLE IF EXISTS cell_{cell_id}")
-                    del result_df
-                    gc.collect()  # Per-cell memory cleanup
+                    # Delete the cell input Parquet file (no longer needed)
+                    if cell_id in self.cell_parquet_files:
+                        cell_parquet = Path(self.cell_parquet_files[cell_id])
+                        if cell_parquet.exists():
+                            cell_parquet.unlink()
+                    
+                    # Batch checkpoint - only every N cells
+                    if i % checkpoint_interval == 0:
+                        self.checkpoint()
+                        gc.collect()
+                    
                     logger.info(f"  [{i}/{len(futures)}] Cell {cell_id} complete in {duration:.2f}s: {count} shortcuts, total: {total_deactivated}")
         else:
             logger.info(f"  Starting with {len(cell_ids)} cells ({total_shortcuts} shortcuts) sequentially...")
             for i, cell_id in enumerate(cell_ids, 1):
-                cell_df = self.con.execute(f"SELECT * FROM cell_{cell_id}").df()
-                if len(cell_df) == 0:
+                if cell_id not in self.cell_parquet_files:
                     continue
-                args = (cell_id, edges_df, cell_df, self.partition_res, self.sp_method, self.hybrid_res)
-                del cell_df  # Free before calling worker
                 
-                cell_id, result_df, count, timing_info, duration = process_chunk_phase4(args)
+                cell_parquet = self.cell_parquet_files[cell_id]
+                args = (cell_id, cell_parquet, self.edges_parquet_path, str(temp_dir), 
+                        self.partition_res, self.sp_method, self.hybrid_res)
+                cell_id, result_path, count, timing_info, duration = process_chunk_phase4(args)
                 all_timing_info.extend(timing_info)
                 
-                if result_df is not None and len(result_df) > 0:
-                    # Insert into backward_deactivated
+                # Insert from Parquet file
+                if result_path and count > 0 and Path(result_path).exists():
                     self.con.execute(f"""
                         INSERT INTO {self.backward_deactivated_table}
-                        SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, inner_res, outer_res
-                        FROM result_df
+                        SELECT * FROM '{result_path}'
                     """)
                     total_deactivated += count
+                    Path(result_path).unlink()  # Delete temp result Parquet file
                 
-                # Drop cell table and cleanup memory
-                self.con.execute(f"DROP TABLE IF EXISTS cell_{cell_id}")
-                del result_df
-                gc.collect()  # Per-cell memory cleanup
+                # Delete the cell input Parquet file
+                cell_parquet_path = Path(cell_parquet)
+                if cell_parquet_path.exists():
+                    cell_parquet_path.unlink()
+                
+                # Batch checkpoint
+                if i % checkpoint_interval == 0:
+                    self.checkpoint()
+                    gc.collect()
+                
                 logger.info(f"  [{i}/{len(cell_ids)}] Cell {cell_id} complete in {duration:.2f}s: {count} shortcuts, total: {total_deactivated}")
+        
+        # Final checkpoint and cleanup
+        self.checkpoint()
+        gc.collect()
+        
+        # Cleanup temp directories and files (robust - handle any remaining files)
+        import shutil
+        
+        # Clean phase4_temp (results directory)
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        
+        # Clean phase4_cells (cell data directory)
+        cell_data_dir = Path(self.db_path).parent / "phase4_cells"
+        if cell_data_dir.exists():
+            shutil.rmtree(cell_data_dir, ignore_errors=True)
+        
+        logger.info(f"  Cleaned up temporary Parquet files")
         
         # Log PURE vs SCIPY timing summary
         if all_timing_info:
@@ -1484,7 +1445,6 @@ class ParallelShortcutProcessor:
                 list_children_cells += list(active_children)
             self.current_cells = list_children_cells
             
-            self.vacuum()
             if child_res < self.partition_res:
                 logger.info(f"  Res {target_res} -> {child_res} complete in {format_time(time.time() - res_start)}. Active cells: {len(list_children_cells)}, Deactivated so far: {self.con.sql(f'SELECT count(*) FROM {self.backward_deactivated_table}').fetchone()[0]}")
           
@@ -1583,7 +1543,7 @@ class ParallelShortcutProcessor:
             # Memory cleanup after each resolution
             self.checkpoint()
             gc.collect()
-
+        
         # Final deactivation at partition_res boundary
         t_final_deact = time.time()
         deactivated_count = self.con.execute(f"""
@@ -1656,16 +1616,41 @@ class ParallelShortcutProcessor:
         self.con.execute("DROP TABLE IF EXISTS current_splits")
         t_split = time.time() - t_split
         
+        # Export cell tables to Parquet files for Phase 4 workers (solves concurrent DB access issue)
+        t_export = time.time()
+        cell_data_dir = Path(self.db_path).parent / "phase4_cells"
+        cell_data_dir.mkdir(exist_ok=True)
+        
+        self.cell_parquet_files = {}  # cell_id -> parquet_path
+        for cell_id in cell_ids:
+            cell_count = self.con.execute(f"SELECT count(*) FROM cell_{cell_id}").fetchone()[0]
+            if cell_count > 0:
+                parquet_path = str(cell_data_dir / f"cell_{cell_id}.parquet")
+                self.con.execute(f"COPY cell_{cell_id} TO '{parquet_path}' (FORMAT PARQUET)")
+                self.cell_parquet_files[cell_id] = parquet_path
+            # Drop table after export - data is now in Parquet
+            self.con.execute(f"DROP TABLE IF EXISTS cell_{cell_id}")
+        
+        t_export = time.time() - t_export
+        
         remaining_active = sum(
-            self.con.sql(f"SELECT count(*) FROM cell_{cell_id}").fetchone()[0]
-            for cell_id in self.current_cells
-        ) if self.current_cells else 0
+            self.con.execute(f"SELECT count(*) FROM '{path}'").fetchone()[0]
+            for path in self.cell_parquet_files.values()
+        ) if self.cell_parquet_files else 0
         total_backward = self.con.sql(f"SELECT count(*) FROM {self.backward_deactivated_table}").fetchone()[0]
         
         logger.info("--------------------------------------------------")
-        logger.info(f"  Timing breakdown: deactivate={total_deactivate_time:.2f}s, assign={total_assign_time:.2f}s, SP={total_sp_time:.2f}s, split={t_split:.2f}s")
-        logger.info(f"  Summary: {len(self.current_cells)} cells ({remaining_active} shortcuts) remain for Phase 4. Deactivated: {total_backward}")
+        logger.info(f"  Timing breakdown: deactivate={total_deactivate_time:.2f}s, assign={total_assign_time:.2f}s, SP={total_sp_time:.2f}s, split={t_split:.2f}s, export={t_export:.2f}s")
+        logger.info(f"  Summary: {len(self.cell_parquet_files)} cells ({remaining_active} shortcuts) exported for Phase 4. Deactivated: {total_backward}")
         
+        # Also export edges table for workers
+        edges_path = str(cell_data_dir / "edges.parquet")
+        self.con.execute(f"COPY edges TO '{edges_path}' (FORMAT PARQUET)")
+        self.edges_parquet_path = edges_path
+        
+        self.current_cells = list(self.cell_parquet_files.keys())
+        self.checkpoint()
+        gc.collect()
         return total_backward
 
     def finalize_and_save(self, output_path: str):
@@ -1727,19 +1712,23 @@ def main():
     res_partition_cells = processor.process_forward_phase1_parallel()
     logger.info(f"Phase 1 complete ({format_time(time.time() - phase1_start)}). Created {len(res_partition_cells)} cell tables.")
     processor.checkpoint()
-    
+    processor.vacuum()
+
     # PHASE 2: Sequential (using ParallelShortcutProcessor methods)
     log_conf.log_section(logger, f"PHASE 2: HIERARCHICAL CONSOLIDATION")
     phase2_start = time.time()
     processor.process_forward_phase2_consolidation()
     logger.info(f"Phase 2 complete ({format_time(time.time() - phase2_start)}).")
-    
+    processor.checkpoint()
+    processor.vacuum()
     # PHASE 3: Sequential (using ParallelShortcutProcessor methods)
     log_conf.log_section(logger, "PHASE 3: BACKWARD CONSOLIDATION")
     phase3_start = time.time()
     processor.process_backward_phase3_consolidation()
     logger.info(f"Phase 3 complete ({format_time(time.time() - phase3_start)}).")
-    
+    processor.checkpoint()
+    processor.vacuum()
+
     # PHASE 4: Parallel
     log_conf.log_section(logger, "PHASE 4: PARALLEL BACKWARD CHUNKED")
     phase4_start = time.time()

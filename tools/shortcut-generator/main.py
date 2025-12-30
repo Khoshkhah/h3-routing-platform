@@ -113,7 +113,7 @@ def run_partitioned_parallel(cfg):
             Path(f).unlink()
             logger.info(f"Deleted: {f}")
         # Also delete parquet checkpoint
-        parquet_checkpoint = persist_dir / "forward_deactivated.parquet"
+        parquet_checkpoint = persist_dir / f"{cfg.input.district}_forward_deactivated.parquet"
         if parquet_checkpoint.exists():
             parquet_checkpoint.unlink()
             logger.info(f"Deleted: {parquet_checkpoint}")
@@ -156,7 +156,7 @@ def run_partitioned_parallel(cfg):
     
     # Check if we can resume from Phase 3
     # Check parquet file first, then table
-    parquet_path = persist_dir / "forward_deactivated.parquet"
+    parquet_path = persist_dir / f"{cfg.input.district}_forward_deactivated.parquet"
     try:
         forward_count = processor.con.execute("SELECT count(*) FROM forward_deactivated").fetchone()[0]
     except:
