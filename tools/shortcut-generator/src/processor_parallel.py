@@ -631,7 +631,8 @@ class ParallelShortcutProcessor:
     
     def __init__(self, db_path: str, forward_deactivated_table: str, backward_deactivated_table: str, 
                  partition_res: int = 7, elementary_table: str = "elementary_table",
-                 sp_method: str = "HYBRID", hybrid_res: int = 10, worker_config: dict = None):
+                 sp_method: str = "HYBRID", hybrid_res: int = 10, worker_config: dict = None,
+                 memory_config: dict = None):
         self.db_path = db_path
         self.con = utils.initialize_duckdb(db_path)
         self.forward_deactivated_table = forward_deactivated_table
@@ -651,6 +652,14 @@ class ParallelShortcutProcessor:
                 'phase1': MAX_WORKERS,
                 'phase4': MAX_WORKERS
             }
+        
+        # Setup memory configuration
+        self.memory = memory_config if memory_config else {
+            'main_process_parallel_limit': '2GB',
+            'worker_ram_multiplier': 0.5,
+            'worker_python_overhead_gb': 1.0,
+            'checkpoint_interval': 5
+        }
         
         # Ensure tables exist
         self.con.execute(f"""
@@ -783,12 +792,12 @@ class ParallelShortcutProcessor:
         num_workers = self.workers.get('phase1', MAX_WORKERS)
         
         if num_workers > 1:
-            logger.info(f"  Processing {len(chunk_ids)} chunks in parallel (max {num_workers} workers)...")
-            
             # [SWAP FIX] Reduce Main Process memory limit while workers are running
+            # Every GB the main process releases can be used by workers or OS buffers.
             try:
-                self.con.execute("SET memory_limit = '2GB'")
-                logger.info("  [MEMORY] Reducing Main Process limit to 2GB to free RAM for workers.")
+                parallel_limit = getattr(self.memory, 'main_process_parallel_limit', '2GB')
+                self.con.execute(f"SET memory_limit = '{parallel_limit}'")
+                logger.info(f"  [MEMORY] Reducing Main Process limit to {parallel_limit} to free RAM for workers.")
             except:
                 pass
 
@@ -807,20 +816,24 @@ class ParallelShortcutProcessor:
                 
             # Available RAM for all workers combined
             # We assume 1.5GB overhead for OS and Python structures in main process
-            # PLUS roughly 1GB overhead per worker for Python objects outside DuckDB's limit
-            available_for_workers = (total_ram_gb - main_mem_gb - 1.5) 
+            # PLUS roughly N GB overhead per worker for Python objects outside DuckDB's limit
+            main_overhead = 1.5
+            worker_overhead = getattr(self.memory, 'worker_python_overhead_gb', 1.0)
+            available_for_workers = (total_ram_gb - main_mem_gb - main_overhead)
             
-            # We use a more conservative 0.5 multiplier to prevent SWAP usage
-            worker_memory_gb = max(1, int((available_for_workers * 0.5) / num_workers))
+            # Use configurable RAM multiplier
+            multiplier = getattr(self.memory, 'worker_ram_multiplier', 0.5)
+            worker_memory_total_gb = max(1, int((available_for_workers * multiplier) / num_workers))
             
-            # Deduct another 1GB from the DuckDB limit specifically to allot for Python (Pandas/Scipy)
-            duckdb_worker_limit = max(1, worker_memory_gb - 1)
-            worker_memory_limit = f"{duckdb_worker_limit}GB"
+            # Deduct worker overhead from DuckDB limit
+            duckdb_worker_limit = max(1, worker_memory_total_gb - worker_overhead)
+            worker_memory_limit = f"{int(duckdb_worker_limit)}GB"
             
             # CPU threads
             total_threads = cpu_count()
             worker_threads = max(1, total_threads // num_workers)
 
+            logger.info(f"  [MEMORY] Using multiplier {multiplier}, overhead {worker_overhead}GB")
             logger.info(f"  [MEMORY] Using worker recycling (maxtasksperchild=1) to prevent leaks.")
             logger.info(f"  Per-Worker: {worker_memory_limit} RAM, {worker_threads} Thread(s).")
             
@@ -858,7 +871,7 @@ class ParallelShortcutProcessor:
                     # Log progress
                     logger.info(f"  [{completed_count}/{len(chunk_ids)}] Chunk {chunk_id} complete in {duration:.2f}s. {count} active")
                         
-                    if completed_count % 10 == 0:
+                    if completed_count % getattr(self.memory, 'checkpoint_interval', 10) == 0:
                         self.checkpoint()
                         try:
                             self.con.execute("PRAGMA shrink_memory")
@@ -1084,18 +1097,17 @@ class ParallelShortcutProcessor:
             main_mem_gb = 4.0 # Fallback
             
         # Available RAM for all workers combined
-        # We assume 1.5GB overhead for OS and Python structures in main process
-        # PLUS roughly 1GB overhead per worker for Python objects outside DuckDB's limit
-        available_for_workers = (total_ram_gb - main_mem_gb - 1.5) 
+        main_overhead = 1.5
+        worker_overhead = getattr(self.memory, 'worker_python_overhead_gb', 1.0)
+        available_for_workers = (total_ram_gb - main_mem_gb - main_overhead)
         
-        # We use a more conservative 0.5 multiplier to prevent SWAP usage
-        # This ensures we leave plenty of room for Linux disk buffers
-        worker_memory_gb = max(1, int((available_for_workers * 0.5) / num_workers))
+        # Use configurable RAM multiplier
+        multiplier = getattr(self.memory, 'worker_ram_multiplier', 0.5)
+        worker_memory_total_gb = max(1, int((available_for_workers * multiplier) / num_workers))
         
-        # Deduct another 1GB from the DuckDB limit specifically to allot for Python (Pandas/Scipy)
-        # DuckDB limit only restricts its internal buffer cache.
-        duckdb_worker_limit = max(1, worker_memory_gb - 1)
-        worker_memory_limit = f"{duckdb_worker_limit}GB"
+        # Deduct worker overhead from DuckDB limit
+        duckdb_worker_limit = max(1, worker_memory_total_gb - worker_overhead)
+        worker_memory_limit = f"{int(duckdb_worker_limit)}GB"
         
         # Split CPU threads fairly between workers (e.g., 20 threads / 5 workers = 4 threads each)
         try:
@@ -1109,12 +1121,14 @@ class ParallelShortcutProcessor:
 
         if num_workers > 1:
             logger.info(f"  Starting with {len(cell_ids)} cells ({total_shortcuts} shortcuts) in parallel...")
+            logger.info(f"  [MEMORY] Using multiplier {multiplier}, overhead {worker_overhead}GB")
             logger.info(f"  [MEMORY] Using worker recycling (maxtasksperchild=1) to prevent leaks.")
             
             # [SWAP FIX] Reduce Main Process memory limit while workers are running
             try:
-                self.con.execute("SET memory_limit = '2GB'")
-                logger.info("  [MEMORY] Reducing Main Process limit to 2GB to free RAM for workers.")
+                parallel_limit = getattr(self.memory, 'main_process_parallel_limit', '2GB')
+                self.con.execute(f"SET memory_limit = '{parallel_limit}'")
+                logger.info(f"  [MEMORY] Reducing Main Process limit to {parallel_limit} to free RAM for workers.")
             except:
                 pass
 
@@ -1152,7 +1166,7 @@ class ParallelShortcutProcessor:
                     logger.info(f"  [{completed_count}/{len(cell_ids)}] Cell {cell_id} complete in {duration:.2f}s: {count} shortcuts, total: {total_deactivated}")
                     
                     # Batch checkpoint and cache release
-                    if completed_count % 5 == 0:
+                    if completed_count % getattr(self.memory, 'checkpoint_interval', 5) == 0:
                         self.checkpoint()
                         try:
                             self.con.execute("PRAGMA shrink_memory")

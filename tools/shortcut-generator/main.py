@@ -141,14 +141,15 @@ def run_partitioned_parallel(cfg):
     
     # Create parallel processor
     processor = ParallelShortcutProcessor(
-        db_path=db_path,
+        db_path=str(db_path),
         forward_deactivated_table="forward_deactivated",
         backward_deactivated_table="backward_deactivated",
         partition_res=cfg.algorithm.partition_res,
         elementary_table="elementary_shortcuts",
         sp_method=cfg.algorithm.sp_method,
         hybrid_res=cfg.algorithm.hybrid_res,
-        worker_config=worker_config
+        worker_config=worker_config,
+        memory_config=cfg.parallel.memory
     )
     
     # Load shared data

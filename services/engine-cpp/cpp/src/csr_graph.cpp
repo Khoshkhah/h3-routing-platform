@@ -153,8 +153,9 @@ bool CSRGraph::load_shortcuts(const std::string& path) {
         sc.to = t.to;
         sc.cost = t.cost;
         sc.via_edge = t.via_edge;
-        sc.cell = t.cell;
         sc.inside = t.inside;
+        // Store res + 1
+        sc.res = (t.cell_res < 0) ? 0 : static_cast<uint32_t>(t.cell_res + 1);
         shortcuts_.push_back(sc);
     }
     
@@ -265,6 +266,8 @@ bool CSRGraph::load_from_duckdb(const std::string& db_path) {
     try {
         duckdb::DBConfig config;
         config.options.access_mode = duckdb::AccessMode::READ_ONLY;
+        // Limit DuckDB memory to prevent aggressive caching of the massive shortcuts table
+        config.options.maximum_memory = 512ULL * 1024 * 1024; // 512 MB in bytes
         duckdb::DuckDB db(db_path, &config);
         duckdb::Connection con(db);
         
@@ -276,64 +279,103 @@ bool CSRGraph::load_from_duckdb(const std::string& db_path) {
         edge_meta_.clear();
         max_edge_id_ = 0;
         
-        // Load shortcuts
-        std::vector<TempShortcut> temp_list;
-        auto result = con.Query("SELECT from_edge, to_edge, cost, via_edge, cell, inside FROM shortcuts");
-        if (result->HasError()) {
-            std::cerr << "Error loading shortcuts: " << result->GetError() << std::endl;
-            return false;
-        }
-        
-        while (auto chunk = result->Fetch()) {
-            for (idx_t i = 0; i < chunk->size(); i++) {
-                TempShortcut sc;
-                sc.from = static_cast<uint32_t>(chunk->GetValue(0, i).GetValue<int32_t>());
-                sc.to = static_cast<uint32_t>(chunk->GetValue(1, i).GetValue<int32_t>());
-                sc.cost = chunk->GetValue(2, i).GetValue<double>();
-                sc.via_edge = static_cast<uint32_t>(chunk->GetValue(3, i).GetValue<int32_t>());
-                sc.cell = static_cast<uint64_t>(chunk->GetValue(4, i).GetValue<int64_t>());
-                sc.inside = chunk->GetValue(5, i).GetValue<int8_t>();
-                sc.cell_res = (sc.cell == 0) ? -1 : static_cast<int8_t>(h3_utils::get_resolution(sc.cell));
-                
-                max_edge_id_ = std::max(max_edge_id_, sc.from);
-                max_edge_id_ = std::max(max_edge_id_, sc.to);
-                temp_list.push_back(sc);
+        // 1. Get stats (max edge ID and total count) first
+        size_t total_shortcuts = 0;
+        {
+            auto result = con.Query("SELECT MAX(GREATEST(from_edge, to_edge)), COUNT(*) FROM shortcuts");
+            if (!result->HasError()) {
+                auto chunk = result->Fetch();
+                if (chunk && chunk->size() > 0) {
+                    // Check for nulls
+                     if (!chunk->GetValue(0, 0).IsNull()) {
+                        max_edge_id_ = static_cast<uint32_t>(chunk->GetValue(0, 0).GetValue<int32_t>());
+                     }
+                     if (!chunk->GetValue(1, 0).IsNull()) {
+                        total_shortcuts = chunk->GetValue(1, 0).GetValue<int64_t>();
+                     }
+                }
             }
         }
-        std::cout << "  Loaded " << temp_list.size() << " shortcuts" << std::endl;
         
-        if (temp_list.empty()) return false;
+        std::cout << "  Stats: max_edge_id=" << max_edge_id_ << ", total_shortcuts=" << total_shortcuts << std::endl;
         
-        // Sort and build CSR (same as load_shortcuts)
-        std::sort(temp_list.begin(), temp_list.end(),
-                  [](const TempShortcut& a, const TempShortcut& b) { return a.from < b.from; });
-        
+        if (total_shortcuts == 0) return false;
+
+        // 2. Prepare offsets and reserve memory
         fwd_offsets_.assign(max_edge_id_ + 2, 0);
+        shortcuts_.reserve(total_shortcuts);
+        
+        // 3. Chunked Loading
+        // We load in chunks of `from_edge` to avoid massive in-memory sorts by DuckDB.
+        // Even with ORDER BY, a slight memory overhead exists.
+        const uint32_t CHUNK_SIZE = 2000000; // 2 million edges per chunk
+        uint32_t current_from = 0;
+        uint32_t current_offset = 0;
+
+        for (uint32_t start_edge = 0; start_edge <= max_edge_id_; start_edge += CHUNK_SIZE) {
+            uint32_t end_edge = std::min(start_edge + CHUNK_SIZE, max_edge_id_ + 1);
+            
+            // Query strictly for range [start, end)
+            std::string query = "SELECT from_edge, to_edge, cost, via_edge, cell, inside FROM shortcuts WHERE from_edge >= " + 
+                                std::to_string(start_edge) + " AND from_edge < " + std::to_string(end_edge) + 
+                                " ORDER BY from_edge";
+                                
+            auto result = con.Query(query);
+            if (result->HasError()) {
+                std::cerr << "Error loading chunk: " << result->GetError() << std::endl;
+                return false;
+            }
+
+            while (auto chunk = result->Fetch()) {
+                for (idx_t i = 0; i < chunk->size(); i++) {
+                    uint32_t u = static_cast<uint32_t>(chunk->GetValue(0, i).GetValue<int32_t>());
+                    uint32_t v = static_cast<uint32_t>(chunk->GetValue(1, i).GetValue<int32_t>());
+                    
+                    // Fill offsets for gaps (e.g. if we jumped from node 5 to 10)
+                    while (current_from < u) {
+                        current_from++;
+                        fwd_offsets_[current_from] = current_offset;
+                    }
+                    
+                    CSRShortcut sc;
+                    sc.from = u; // Redundant but kept for struct compatibility
+                    sc.to = v;
+                    sc.cost = chunk->GetValue(2, i).GetValue<double>();
+                    sc.via_edge = static_cast<uint32_t>(chunk->GetValue(3, i).GetValue<int32_t>());
+                    
+                    uint64_t cell = static_cast<uint64_t>(chunk->GetValue(4, i).GetValue<int64_t>());
+                    sc.inside = chunk->GetValue(5, i).GetValue<int8_t>();
+                    
+                    // Direct bitfield assignment
+                    if (cell == 0) {
+                        sc.res = 0; // Represents -1 or invalid
+                    } else {
+                        // Store res + 1 to handle Res 0 correctly
+                        sc.res = h3_utils::get_resolution(cell) + 1;
+                    }
+                    
+                    shortcuts_.push_back(sc);
+                    current_offset++;
+                }
+            }
+        }
+        
+        // Fill remaining offsets
+        while (current_from <= max_edge_id_) {
+            current_from++;
+            fwd_offsets_[current_from] = current_offset;
+        }
+        
+        std::cout << "  Loaded " << shortcuts_.size() << " shortcuts (Streamed)" << std::endl;
+        
+        if (shortcuts_.empty()) return false;
+        
+        // Build backward CSR (Still requires vector counts, but no temp list sorting!)
         std::vector<uint32_t> counts(max_edge_id_ + 1, 0);
-        for (const auto& sc : temp_list) counts[sc.from]++;
-        
-        uint32_t offset = 0;
-        for (size_t i = 0; i <= max_edge_id_; ++i) {
-            fwd_offsets_[i] = offset;
-            offset += counts[i];
-        }
-        fwd_offsets_[max_edge_id_ + 1] = offset;
-        
-        shortcuts_.reserve(temp_list.size());
-        for (const auto& t : temp_list) {
-            CSRShortcut sc;
-            sc.from = t.from; sc.to = t.to; sc.cost = t.cost;
-            sc.via_edge = t.via_edge; sc.cell = t.cell;
-            sc.inside = t.inside;
-            shortcuts_.push_back(sc);
-        }
-        
-        // Build backward CSR
-        std::fill(counts.begin(), counts.end(), 0);
         for (const auto& sc : shortcuts_) counts[sc.to]++;
         
         bwd_offsets_.assign(max_edge_id_ + 2, 0);
-        offset = 0;
+        uint32_t offset = 0;
         for (size_t i = 0; i <= max_edge_id_; ++i) {
             bwd_offsets_[i] = offset;
             offset += counts[i];
@@ -348,42 +390,52 @@ bool CSRGraph::load_from_duckdb(const std::string& db_path) {
         }
         
         // Load edges with geometry
-        result = con.Query("SELECT id, from_cell, to_cell, lca_res, length, cost, geometry FROM edges");
-        if (result->HasError()) {
-            std::cerr << "Error loading edges: " << result->GetError() << std::endl;
-            return false;
-        }
+        // Chunked loading to avoid massive WKT string materialization
+        const uint32_t EDGE_CHUNK_SIZE = 100000;
         
-        while (auto chunk = result->Fetch()) {
-            for (idx_t i = 0; i < chunk->size(); i++) {
-                uint32_t id = static_cast<uint32_t>(chunk->GetValue(0, i).GetValue<int64_t>());
-                CSREdgeMeta meta;
-                meta.from_cell = static_cast<uint64_t>(chunk->GetValue(1, i).GetValue<int64_t>());
-                meta.to_cell = static_cast<uint64_t>(chunk->GetValue(2, i).GetValue<int64_t>());
-                meta.lca_res = chunk->GetValue(3, i).GetValue<int64_t>();
-                meta.length = chunk->GetValue(4, i).GetValue<double>();
-                meta.cost = chunk->GetValue(5, i).GetValue<double>();
-                
-                std::string geom = chunk->GetValue(6, i).ToString();
-                size_t start = geom.find('(');
-                size_t end = geom.rfind(')');
-                if (start != std::string::npos && end != std::string::npos && end > start) {
-                    std::string coords = geom.substr(start + 1, end - start - 1);
-                    std::istringstream ss(coords);
-                    std::string point;
-                    while (std::getline(ss, point, ',')) {
-                        size_t first = point.find_first_not_of(" \t");
-                        if (first == std::string::npos) continue;
-                        point = point.substr(first);
-                        std::istringstream ps(point);
-                        double lon, lat;
-                        if (ps >> lon >> lat) {
-                            meta.geometry.push_back({lon, lat});
+        for (uint32_t start_id = 0; start_id <= max_edge_id_; start_id += EDGE_CHUNK_SIZE) {
+            uint32_t end_id = std::min(start_id + EDGE_CHUNK_SIZE, max_edge_id_ + 1);
+            
+            std::string query = "SELECT id, from_cell, to_cell, lca_res, length, cost, geometry FROM edges "
+                                "WHERE id >= " + std::to_string(start_id) + " AND id < " + std::to_string(end_id);
+            
+            auto result = con.Query(query);
+            if (result->HasError()) {
+                std::cerr << "Error loading edges chunk: " << result->GetError() << std::endl;
+                return false;
+            }
+            
+            while (auto chunk = result->Fetch()) {
+                for (idx_t i = 0; i < chunk->size(); i++) {
+                    uint32_t id = static_cast<uint32_t>(chunk->GetValue(0, i).GetValue<int64_t>());
+                    CSREdgeMeta meta;
+                    meta.from_cell = static_cast<uint64_t>(chunk->GetValue(1, i).GetValue<int64_t>());
+                    meta.to_cell = static_cast<uint64_t>(chunk->GetValue(2, i).GetValue<int64_t>());
+                    meta.lca_res = chunk->GetValue(3, i).GetValue<int64_t>();
+                    meta.length = chunk->GetValue(4, i).GetValue<double>();
+                    meta.cost = chunk->GetValue(5, i).GetValue<double>();
+                    
+                    std::string geom = chunk->GetValue(6, i).ToString();
+                    size_t start = geom.find('(');
+                    size_t end = geom.rfind(')');
+                    if (start != std::string::npos && end != std::string::npos && end > start) {
+                        std::string coords = geom.substr(start + 1, end - start - 1);
+                        std::istringstream ss(coords);
+                        std::string point;
+                        while (std::getline(ss, point, ',')) {
+                            size_t first = point.find_first_not_of(" \t");
+                            if (first == std::string::npos) continue;
+                            point = point.substr(first);
+                            std::istringstream ps(point);
+                            double lon, lat;
+                            if (ps >> lon >> lat) {
+                                meta.geometry.push_back({lon, lat});
+                            }
                         }
+                        meta.geometry.shrink_to_fit();
                     }
-                    meta.geometry.shrink_to_fit();
+                    edge_meta_[id] = std::move(meta);
                 }
-                edge_meta_[id] = std::move(meta);
             }
         }
         std::cout << "  Loaded " << edge_meta_.size() << " edges with geometry" << std::endl;
@@ -722,7 +774,7 @@ CSRQueryResult CSRGraph::query_classic(uint32_t source_edge, uint32_t target_edg
             auto [start, end] = get_fwd_range(u);
             for (uint32_t i = start; i < end && i < shortcuts_.size(); ++i) {
                 const auto& sc = shortcuts_[i];
-                if (sc.inside != 1) continue;
+                if (sc.get_inside() != 1) continue;
                 
                 double nd = d + sc.cost;
                 auto v_it = dist_fwd.find(sc.to);
@@ -758,7 +810,7 @@ CSRQueryResult CSRGraph::query_classic(uint32_t source_edge, uint32_t target_edg
                 if (idx >= shortcuts_.size()) continue;
                 
                 const auto& sc = shortcuts_[idx];
-                if (sc.inside != -1 && sc.inside != 0) continue;
+                if (sc.get_inside() != -1 && sc.get_inside() != 0) continue;
                 
                 double nd = d + sc.cost;
                 auto prev_it = dist_bwd.find(sc.from);
@@ -867,7 +919,7 @@ CSRQueryResult CSRGraph::query_classic_alt(
             auto [start, end] = get_fwd_range(u);
             for (uint32_t i = start; i < end && i < shortcuts_.size(); ++i) {
                 const auto& sc = shortcuts_[i];
-                if (sc.inside != 1) continue;
+                if (sc.get_inside() != 1) continue;
                 
                 double cost = sc.cost;
                 if (penalty_set.count(sc.to) || 
@@ -909,7 +961,7 @@ CSRQueryResult CSRGraph::query_classic_alt(
                 if (idx >= shortcuts_.size()) continue;
                 
                 const auto& sc = shortcuts_[idx];
-                if (sc.inside != -1 && sc.inside != 0) continue;
+                if (sc.get_inside() != -1 && sc.get_inside() != 0) continue;
                 
                 double cost = sc.cost;
                 if (penalty_set.count(sc.from) ||
@@ -1172,7 +1224,7 @@ CSRQueryResult CSRGraph::query_pruned(uint32_t source_edge, uint32_t target_edge
             auto [start, end] = get_fwd_range(u);
             for (uint32_t i = start; i < end && i < shortcuts_.size(); ++i) {
                 const auto& sc = shortcuts_[i];
-                if (sc.inside != 1) continue;
+                if (sc.get_inside() != 1) continue;
                 
                 double nd = d + sc.cost;
                 auto v_it = dist_fwd.find(sc.to);
@@ -1214,9 +1266,9 @@ CSRQueryResult CSRGraph::query_pruned(uint32_t source_edge, uint32_t target_edge
                 const auto& sc = shortcuts_[idx];
                 
                 bool allowed = false;
-                if (sc.inside == -1 && check) allowed = true;
-                else if (sc.inside == 0 && u_res <= high.res) allowed = true;
-                else if (sc.inside == -2 && !check) allowed = true;
+                if (sc.get_inside() == -1 && check) allowed = true;
+                else if (sc.get_inside() == 0 && u_res <= high.res) allowed = true;
+                else if (sc.get_inside() == -2 && !check) allowed = true;
                 
                 if (!allowed) continue;
                 
@@ -1335,13 +1387,13 @@ CSRQueryResult CSRGraph::query_unidirectional(uint32_t source_edge, uint32_t tar
             
             // Logic matching query_uni_lca in algorithms.py
             if (phase == 0 || phase == 1) {
-                if (sc.get_res() > high.res && sc.inside == 1) { allowed = true; next_phase = 1; }
-                else if (sc.get_res() <= high.res && sc.inside == 1) { allowed = true; next_phase = 2; }
-                else if (sc.inside != 1) { allowed = true; next_phase = 2; }
+                if (sc.get_res() > high.res && sc.get_inside() == 1) { allowed = true; next_phase = 1; }
+                else if (sc.get_res() <= high.res && sc.get_inside() == 1) { allowed = true; next_phase = 2; }
+                else if (sc.get_inside() != 1) { allowed = true; next_phase = 2; }
             } else if (phase == 2) {
-                if (sc.inside != 1) { allowed = true; next_phase = 3; }
+                if (sc.get_inside() != 1) { allowed = true; next_phase = 3; }
             } else if (phase == 3) {
-                if (sc.inside == -1) { allowed = true; next_phase = 3; }
+                if (sc.get_inside() == -1) { allowed = true; next_phase = 3; }
             }
             
             if (!allowed) continue;
@@ -1432,7 +1484,7 @@ CSRQueryResult CSRGraph::query_multi(
             auto [start, end] = get_fwd_range(u);
             for (uint32_t i = start; i < end && i < shortcuts_.size(); ++i) {
                 const auto& sc = shortcuts_[i];
-                if (sc.inside != 1) continue;
+                if (sc.get_inside() != 1) continue;
                 
                 double nd = d + sc.cost;
                 auto v_it = dist_fwd.find(sc.to);
@@ -1468,7 +1520,7 @@ CSRQueryResult CSRGraph::query_multi(
                 if (idx >= shortcuts_.size()) continue;
                 
                 const auto& sc = shortcuts_[idx];
-                if (sc.inside != -1 && sc.inside != 0) continue;
+                if (sc.get_inside() != -1 && sc.get_inside() != 0) continue;
                 
                 double nd = d + sc.cost;
                 auto prev_it = dist_bwd.find(sc.from);

@@ -35,3 +35,11 @@ datasets:
     zoom: 11
     short_name: "Metro Vancouver"
     description: "All Greater Vancouver, British Columbia, Canada"
+
+  - name: "cell_832b9bfffffffff"
+    db_path: "{data_root}/cell_832b9bfffffffff.db"
+    boundary_path: "{boundary_root}/cell_832b9bfffffffff.geojson"
+    center: [43.65, -79.38]
+    zoom: 11
+    short_name: "GTA Toronto"
+    description: "Greater Toronto Area, Ontario, Canada"

@@ -82,6 +82,14 @@ class LoggingConfig:
 
 
 @dataclass
+class MemoryConfig:
+    main_process_parallel_limit: str = "2GB"
+    worker_ram_multiplier: float = 0.5
+    worker_python_overhead_gb: float = 1.0
+    checkpoint_interval: int = 5
+
+
+@dataclass
 class ParallelConfig:
     workers: int = 1           # Default for all phases if phase-specific not set
     workers_phase1: Optional[int] = None  # Override for Phase 1
@@ -89,6 +97,7 @@ class ParallelConfig:
     workers_phase3: Optional[int] = None  # Override for Phase 3 (currently unused)
     workers_phase4: Optional[int] = None  # Override for Phase 4
     chunk_size: int = 1000
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
 
 
 @dataclass
@@ -213,7 +222,11 @@ def dict_to_config(data: dict) -> Config:
     
     if 'parallel' in data:
         for k, v in data['parallel'].items():
-            if hasattr(cfg.parallel, k):
+            if k == 'memory' and isinstance(v, dict):
+                for mk, mv in v.items():
+                    if hasattr(cfg.parallel.memory, mk):
+                        setattr(cfg.parallel.memory, mk, mv)
+            elif hasattr(cfg.parallel, k):
                 setattr(cfg.parallel, k, v)
     
     return cfg

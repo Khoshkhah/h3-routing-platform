@@ -62,20 +62,28 @@ struct CSREdgeMeta {
  * @brief Shortcut edge stored in CSR arrays.
  */
 struct CSRShortcut {
-    uint64_t cell;
-    float cost;
     uint32_t from;
     uint32_t to;
-    uint32_t via_edge : 30;
-    int32_t inside : 2;
+    float cost;
     
-    // Helper to get resolution from cell on the fly
+    // Bitfield (4 bytes):
+    uint32_t via_edge : 24;  // Supports up to 16M edges (OK for 912k max)
+    uint32_t inside : 2;     // -1 (3), -2 (2), 0, 1
+    uint32_t res : 6;        // stored = real + 1. 0 = invalid.
+    
+    // Helper to get resolution directly
     int8_t get_res() const {
-        return (cell == 0) ? -1 : static_cast<int8_t>((cell >> 52) & 0xF);
+        return (res == 0) ? -1 : static_cast<int8_t>(res - 1);
+    }
+
+    // Helper to get inside status (sign extend 2 bits)
+    int8_t get_inside() const {
+        // 3(11)->-1, 2(10)->-2, 1(01)->1, 0(00)->0
+        return (inside >= 2) ? static_cast<int8_t>(inside | 0xFC) : static_cast<int8_t>(inside);
     }
 };
-// Ensure size is exactly 24 bytes
-static_assert(sizeof(CSRShortcut) == 24, "CSRShortcut must be 24 bytes");
+// Ensure size is exactly 16 bytes
+static_assert(sizeof(CSRShortcut) == 16, "CSRShortcut must be 16 bytes");
 
 /**
  * @brief Spatial index type.
