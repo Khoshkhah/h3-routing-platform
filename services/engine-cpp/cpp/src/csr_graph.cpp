@@ -1008,9 +1008,10 @@ CSRQueryResult CSRGraph::query_bidijkstra(uint32_t source_edge, uint32_t target_
     parent_fwd[source_edge] = source_edge;
     pq_fwd.push({0.0, source_edge});
     
-    dist_bwd[target_edge] = 0.0;
+    double target_cost = get_edge_cost(target_edge);
+    dist_bwd[target_edge] = target_cost;
     parent_bwd[target_edge] = target_edge;
-    pq_bwd.push({0.0, target_edge});
+    pq_bwd.push({target_cost, target_edge});
     
     double best = INF;
     uint32_t meeting = 0;
@@ -1094,7 +1095,7 @@ CSRQueryResult CSRGraph::query_bidijkstra(uint32_t source_edge, uint32_t target_
     }
     
     // Final cost: cost of first edge + sum of transitions
-    double final_cost = get_edge_cost(path[0]) + best;
+    double final_cost = best;
     return {final_cost, path, true, ""};
 }
 
@@ -1292,12 +1293,14 @@ CSRQueryResult CSRGraph::query_unidirectional(uint32_t source_edge, uint32_t tar
     // Map: state -> parent_state (for path reconstruction)
     std::unordered_map<uint64_t, uint64_t> parent_map;
     
-    // Initial state: (source_edge, 0, false)
-    uint64_t start_state = (static_cast<uint64_t>(source_edge) << 4) | (0 << 1) | 0;
+    // Initial state: (source_edge, phase=0)
+    // Packing: (edge << 4) | phase
+    uint64_t start_state = (static_cast<uint64_t>(source_edge) << 4) | 0;
     
-    dist_map[start_state] = 0.0;
+    double src_cost = 0;
+    dist_map[start_state] = src_cost;
     parent_map[start_state] = start_state; // root points to self
-    pq.push({0.0, start_state});
+    pq.push({src_cost, start_state});
     
     double best_dist = INF;
     uint64_t best_end_state = 0;
@@ -1308,25 +1311,18 @@ CSRQueryResult CSRGraph::query_unidirectional(uint32_t source_edge, uint32_t tar
         
         // Unpack state
         uint32_t u = static_cast<uint32_t>(curr_packed >> 4);
-        uint32_t counter = static_cast<uint32_t>((curr_packed >> 1) & 0x7);
-        bool used_minus1 = (curr_packed & 1) != 0;
+        int phase = static_cast<int>(curr_packed & 0xF); // Use 4 bits for phase just in case/consistency
         
         if (d > dist_map[curr_packed]) continue;
         if (d >= best_dist) continue;
         
         // Target check
         if (u == target_edge) {
-            if (d < best_dist) {
-                best_dist = d;
-                best_end_state = curr_packed;
-                found = true;
-            }
-            continue;
+            best_dist = d + get_edge_cost(target_edge);
+            best_end_state = curr_packed;
+            found = true;
+            break; 
         }
-        
-        // Pruning logic - get u's resolution
-        const auto* meta = get_edge_meta(u);
-        int u_res = meta ? static_cast<int>(meta->lca_res) : -1;
         
         // Explore neighbors
         auto [start, end] = get_fwd_range(u);
@@ -1334,35 +1330,25 @@ CSRQueryResult CSRGraph::query_unidirectional(uint32_t source_edge, uint32_t tar
             if (i >= shortcuts_.size()) break;
             const auto& sc = shortcuts_[i];
             
-            // --- Pruning Rules (match Python prototype EXACTLY) ---
-            bool can_use = false;
-            uint32_t next_counter = counter;
-            bool next_used_minus1 = used_minus1;
+            bool allowed = false;
+            int next_phase = phase;
             
-            if (u_res > high.res) {
-                // ABOVE PEAK: only inside=1 allowed (or -1 if already used_minus1)
-                if (sc.inside == 1 && !used_minus1) {
-                    can_use = true;
-                } else if (sc.inside == -1 && used_minus1) {
-                    can_use = true;
-                }
-            } else {
-                // AT OR BELOW PEAK: inside={0,-2} with counter limit, or inside=-1
-                if ((sc.inside == 0 || sc.inside == -2) && counter < 2) {
-                    can_use = true;
-                    next_counter++;
-                    next_used_minus1 = true;
-                } else if (sc.inside == -1) {
-                    can_use = true;
-                    next_used_minus1 = true;
-                }
+            // Logic matching query_uni_lca in algorithms.py
+            if (phase == 0 || phase == 1) {
+                if (sc.get_res() > high.res && sc.inside == 1) { allowed = true; next_phase = 1; }
+                else if (sc.get_res() <= high.res && sc.inside == 1) { allowed = true; next_phase = 2; }
+                else if (sc.inside != 1) { allowed = true; next_phase = 2; }
+            } else if (phase == 2) {
+                if (sc.inside != 1) { allowed = true; next_phase = 3; }
+            } else if (phase == 3) {
+                if (sc.inside == -1) { allowed = true; next_phase = 3; }
             }
             
-            if (!can_use) continue;
+            if (!allowed) continue;
             
             // Relaxation
             double new_dist = d + sc.cost;
-            uint64_t next_state = (static_cast<uint64_t>(sc.to) << 4) | (next_counter << 1) | (next_used_minus1 ? 1 : 0);
+            uint64_t next_state = (static_cast<uint64_t>(sc.to) << 4) | next_phase;
             
             auto it = dist_map.find(next_state);
             if (it == dist_map.end() || new_dist < it->second) {
@@ -1392,15 +1378,10 @@ CSRQueryResult CSRGraph::query_unidirectional(uint32_t source_edge, uint32_t tar
     std::reverse(path.begin(), path.end());
     
     // Add target edge cost to total (consistent with other query methods)
-    double target_cost = get_edge_cost(target_edge);
-    double total_distance = best_dist + target_cost;
+    double total_distance = best_dist;
     
     return {total_distance, path, true, ""};
 }
-
-// ============================================================
-// QUERY: MULTI-SOURCE/TARGET
-// ============================================================
 
 CSRQueryResult CSRGraph::query_multi(
     const std::vector<uint32_t>& source_edges,
@@ -1542,7 +1523,7 @@ CSRQueryResult CSRGraph::query_multi(
 }
 
 // ============================================================
-// QUERY: NORMAL BIDIRECTIONAL DIJKSTRA (No CH)
+// QUERY: NORMAL DIJKSTRA (No CH)
 // ============================================================
 
 CSRQueryResult CSRGraph::query_dijkstra(uint32_t source_edge, uint32_t target_edge) const {
@@ -1559,126 +1540,58 @@ CSRQueryResult CSRGraph::query_dijkstra(uint32_t source_edge, uint32_t target_ed
         return {-1, {}, false, "Target edge not found"};
     }
     
-    std::unordered_map<uint32_t, double> dist_fwd, dist_bwd;
-    std::unordered_map<uint32_t, uint32_t> parent_fwd, parent_bwd;
-    MinHeap pq_fwd, pq_bwd;
+    std::unordered_map<uint32_t, double> dist;
+    std::unordered_map<uint32_t, uint32_t> parent;
+    MinHeap pq;
     
-    dist_fwd[source_edge] = 0.0;
-    parent_fwd[source_edge] = source_edge;
-    pq_fwd.push({0.0, source_edge});
+    dist[source_edge] = 0.0;
+    parent[source_edge] = source_edge;
+    pq.push({0.0, source_edge});
     
-    double target_cost = get_edge_cost(target_edge);
-    dist_bwd[target_edge] = target_cost;
-    parent_bwd[target_edge] = target_edge;
-    pq_bwd.push({target_cost, target_edge});
-    
-    double best = INF;
-    uint32_t meeting = 0;
+    double best_dist = INF;
     bool found = false;
     
-    while (!pq_fwd.empty() || !pq_bwd.empty()) {
-        // Forward step
-        if (!pq_fwd.empty()) {
-            auto [d, u] = pq_fwd.top(); pq_fwd.pop();
-            
-            auto it = dist_fwd.find(u);
-            if (it != dist_fwd.end() && d > it->second) continue;
-            if (d >= best) continue;
-            
-            auto [start, end] = get_fwd_range(u);
-            for (uint32_t i = start; i < end && i < shortcuts_.size(); ++i) {
-                const auto& sc = shortcuts_[i];
-                
-                // Standard Dijkstra on all available edges (baseline)
-                // if (sc.via_edge != 0 && sc.via_edge != sc.from) continue;
-                
-                double nd = d + sc.cost;
-                auto v_it = dist_fwd.find(sc.to);
-                if (v_it == dist_fwd.end() || nd < v_it->second) {
-                    dist_fwd[sc.to] = nd;
-                    parent_fwd[sc.to] = u;
-                    pq_fwd.push({nd, sc.to});
-                    
-                    auto bwd_it = dist_bwd.find(sc.to);
-                    if (bwd_it != dist_bwd.end()) {
-                        double total = nd + bwd_it->second;
-                        if (total < best) {
-                            best = total;
-                            meeting = sc.to;
-                            found = true;
-                        }
-                    }
-                }
-            }
-        }
+    while (!pq.empty()) {
+        auto [d, u] = pq.top(); pq.pop();
         
-        // Backward step
-        if (!pq_bwd.empty()) {
-            auto [d, u] = pq_bwd.top(); pq_bwd.pop();
-            
-            auto it = dist_bwd.find(u);
-            if (it != dist_bwd.end() && d > it->second) continue;
-            if (d >= best) continue;
-            
-            auto [start, end] = get_bwd_range(u);
-            for (uint32_t k = start; k < end && k < bwd_indices_.size(); ++k) {
-                uint32_t idx = bwd_indices_[k];
-                if (idx >= shortcuts_.size()) continue;
-                
-                const auto& sc = shortcuts_[idx];
-                
-                // Standard Dijkstra on all available edges (baseline)
-                // if (sc.via_edge != 0 && sc.via_edge != sc.from) continue;
-                
-                double nd = d + sc.cost;
-                auto prev_it = dist_bwd.find(sc.from);
-                if (prev_it == dist_bwd.end() || nd < prev_it->second) {
-                    dist_bwd[sc.from] = nd;
-                    parent_bwd[sc.from] = u;
-                    pq_bwd.push({nd, sc.from});
-                    
-                    auto fwd_it = dist_fwd.find(sc.from);
-                    if (fwd_it != dist_fwd.end()) {
-                        double total = fwd_it->second + nd;
-                        if (total < best) {
-                            best = total;
-                            meeting = sc.from;
-                            found = true;
-                        }
-                    }
-                }
-            }
-        }
+        if (d > dist[u]) continue;
         
-        // Early termination
-        if (!pq_fwd.empty() && !pq_bwd.empty()) {
-            if (pq_fwd.top().dist >= best && pq_bwd.top().dist >= best) break;
-        } else if (pq_fwd.empty() && pq_bwd.empty()) {
+        if (u == target_edge) {
+            best_dist = d;
+            found = true;
             break;
+        }
+        
+        auto [start, end] = get_fwd_range(u);
+        for (uint32_t i = start; i < end && i < shortcuts_.size(); ++i) {
+            const auto& sc = shortcuts_[i];
+            
+            double nd = d + sc.cost;
+            auto it = dist.find(sc.to);
+            if (it == dist.end() || nd < it->second) {
+                dist[sc.to] = nd;
+                parent[sc.to] = u;
+                pq.push({nd, sc.to});
+            }
         }
     }
     
-    if (!found) return {-1, {}, false, "No path found"};
+    if (!found) {
+        return {-1, {}, false, "Path not found"};
+    }
     
     // Reconstruct path
     std::vector<uint32_t> path;
-    uint32_t curr = meeting;
-    
-    while (true) {
+    uint32_t curr = target_edge;
+    while (curr != source_edge) {
         path.push_back(curr);
-        auto it = parent_fwd.find(curr);
-        if (it == parent_fwd.end() || it->second == curr) break;
-        curr = it->second;
+        curr = parent[curr];
     }
+    path.push_back(source_edge);
     std::reverse(path.begin(), path.end());
     
-    curr = meeting;
-    while (true) {
-        auto it = parent_bwd.find(curr);
-        if (it == parent_bwd.end() || it->second == curr) break;
-        curr = it->second;
-        path.push_back(curr);
-    }
+    // Add target edge cost to final distance
+    double final_cost = best_dist + get_edge_cost(target_edge);
     
-    return {best, path, true, ""};
+    return {final_cost, path, true, ""};
 }

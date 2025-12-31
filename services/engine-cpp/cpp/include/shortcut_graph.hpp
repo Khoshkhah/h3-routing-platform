@@ -170,6 +170,11 @@ public:
     QueryResult query_unidirectional(uint32_t source_edge, uint32_t target_edge) const;
 
     /**
+     * @brief Standard Unidirectional Dijkstra (Baseline).
+     */
+    QueryResult query_dijkstra(uint32_t source_edge, uint32_t target_edge) const;
+
+    /**
      * @brief Multi-source/target bidirectional search.
      */
     QueryResult query_multi(

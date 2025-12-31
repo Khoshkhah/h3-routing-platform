@@ -9,7 +9,7 @@ import time
 import gc
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from multiprocessing import cpu_count
+from multiprocessing import cpu_count, Pool
 import duckdb
 import h3
 import pandas as pd
@@ -45,7 +45,7 @@ def process_chunk_phase1(args):
     Writes results to Parquet files to avoid large DataFrame IPC.
     Returns: (chunk_id, active_path, deactivated_path, active_count, timing_info, duration)
     """
-    chunk_id, shortcuts_parquet_path, edges_parquet_path, temp_dir, partition_res, sp_method, hybrid_res = args
+    chunk_id, shortcuts_parquet_path, edges_parquet_path, temp_dir, partition_res, sp_method, hybrid_res, worker_memory, worker_threads = args
     
     timing_info = []  # List of (res, method, time)
     start_time = time.time()
@@ -55,6 +55,13 @@ def process_chunk_phase1(args):
     try:
         # Worker uses in-memory DuckDB
         con = duckdb.connect(":memory:")
+        con.execute(f"SET temp_directory = '{temp_dir}'")
+        
+        # Apply worker limits
+        if worker_memory:
+            con.execute(f"SET memory_limit = '{worker_memory}'")
+        if worker_threads:
+            con.execute(f"SET threads = {worker_threads}")
         
         # Register H3 UDFs
         con.create_function("h3_lca", utils._find_lca_impl, ["BIGINT", "BIGINT"], "BIGINT")
@@ -146,11 +153,17 @@ def process_chunk_phase1(args):
             deactivated_path = None
         
         con.close()
+        
+        gc.collect()
+        
         return (chunk_id, active_path, deactivated_path, active_count, timing_info, time.time() - start_time)
     
     except Exception as e:
         import traceback
         traceback.print_exc()
+        if 'con' in locals():
+            con.close()
+        gc.collect()
         return (chunk_id, None, None, 0, [], time.time() - start_time)
 
 
@@ -170,9 +183,10 @@ def process_chunk_phase4(args):
     result_path = f"{temp_dir}/phase4_result_{cell_id}.parquet"
     
     try:
-        # Worker uses disk-backed DuckDB (spills to disk, manages memory)
-        worker_db_path = f"{temp_dir}/worker_{cell_id}.db"
-        con = duckdb.connect(worker_db_path)
+        # Worker uses in-memory DuckDB (faster than disk-backed)
+        # We set a temp directory to allow spilling if memory_limit is hit
+        con = duckdb.connect(":memory:")
+        con.execute(f"SET temp_directory = '{temp_dir}'")
         
         # Apply worker limits
         if worker_memory:
@@ -281,18 +295,17 @@ def process_chunk_phase4(args):
             result_path = None
         
         con.close()
-        
-        # Cleanup
-        if Path(worker_db_path).exists():
-            Path(worker_db_path).unlink()
             
         duration = time.time() - start_time
         
-        # Log peak memory for this worker
+        # Log peak memory and Process ID for this worker to verify recycling
         usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        # Linux returns maxrss in KB
         mb = usage / 1024
-        logger.debug(f"  [WORKER {cell_id}] Peak memory: {mb:.2f} MB, Duration: {duration:.2f}s")
+        pid = os.getpid()
+        logger.debug(f"  [WORKER {cell_id} | PID {pid}] Peak memory: {mb:.2f} MB, Duration: {duration:.2f}s")
+        
+        # Force garbage collection at end of worker task
+        gc.collect()
         
         return (cell_id, result_path, total_deactivated, timing_info, duration)
     
@@ -300,8 +313,11 @@ def process_chunk_phase4(args):
         import traceback
         traceback.print_exc()
         # Cleanup on error
+        if 'con' in locals():
+            con.close()
         if 'worker_db_path' in locals():
             Path(worker_db_path).unlink(missing_ok=True)
+        gc.collect()
         return (cell_id, None, 0, [], time.time() - start_time)
 
 
@@ -558,9 +574,13 @@ def _run_shortest_paths_worker(con, input_table: str, method: str = "SCIPY", num
             cell_df = con.execute(f"SELECT * FROM sp_input WHERE current_cell = {cell}").df()
             
             if len(cell_df) > 0:
+                merged_count = len(cell_df)
                 processed = process_partition_scipy(cell_df)
                 if not processed.empty:
                     con.execute("INSERT INTO shortcuts_next SELECT from_edge, to_edge, cost, via_edge FROM processed")
+                
+                # Explicit cleanup of large objects
+                del processed
             
             del cell_df
         
@@ -764,19 +784,61 @@ class ParallelShortcutProcessor:
         
         if num_workers > 1:
             logger.info(f"  Processing {len(chunk_ids)} chunks in parallel (max {num_workers} workers)...")
-            with ProcessPoolExecutor(max_workers=num_workers) as executor:
-                # Submit futures with Parquet paths
-                futures = {}
-                for chunk_id in chunk_ids:
-                    if chunk_id in chunk_parquet_files:
-                        future = executor.submit(process_chunk_phase1, 
-                            (chunk_id, chunk_parquet_files[chunk_id], edges_parquet_path, 
-                             str(temp_dir), self.partition_res, self.sp_method, self.hybrid_res))
-                        futures[future] = chunk_id
+            
+            # [SWAP FIX] Reduce Main Process memory limit while workers are running
+            try:
+                self.con.execute("SET memory_limit = '2GB'")
+                logger.info("  [MEMORY] Reducing Main Process limit to 2GB to free RAM for workers.")
+            except:
+                pass
+
+            # Calculate per-worker memory limit properly
+            try:
+                total_ram_gb = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / (1024**3)
+            except:
+                total_ram_gb = 16 # Default fallback
                 
-                for i, future in enumerate(as_completed(futures), 1):
-                    chunk_id, active_path, deactivated_path, count, timing_info, duration = future.result()
+            # Account for the main process's DuckDB memory limit
+            main_mem_limit_str = os.environ.get("DUCKDB_MEMORY_LIMIT", "4GB")
+            if "GB" in main_mem_limit_str.upper() or "G" in main_mem_limit_str.upper():
+                main_mem_gb = float(main_mem_limit_str.upper().replace("GB", "").replace("G", ""))
+            else:
+                main_mem_gb = 4.0 # Fallback
+                
+            # Available RAM for all workers combined
+            # We assume 1.5GB overhead for OS and Python structures in main process
+            # PLUS roughly 1GB overhead per worker for Python objects outside DuckDB's limit
+            available_for_workers = (total_ram_gb - main_mem_gb - 1.5) 
+            
+            # We use a more conservative 0.5 multiplier to prevent SWAP usage
+            worker_memory_gb = max(1, int((available_for_workers * 0.5) / num_workers))
+            
+            # Deduct another 1GB from the DuckDB limit specifically to allot for Python (Pandas/Scipy)
+            duckdb_worker_limit = max(1, worker_memory_gb - 1)
+            worker_memory_limit = f"{duckdb_worker_limit}GB"
+            
+            # CPU threads
+            total_threads = cpu_count()
+            worker_threads = max(1, total_threads // num_workers)
+
+            logger.info(f"  [MEMORY] Using worker recycling (maxtasksperchild=1) to prevent leaks.")
+            logger.info(f"  Per-Worker: {worker_memory_limit} RAM, {worker_threads} Thread(s).")
+            
+            # Prepare arguments
+            all_args = []
+            for chunk_id in chunk_ids:
+                if chunk_id in chunk_parquet_files:
+                    all_args.append((chunk_id, chunk_parquet_files[chunk_id], edges_parquet_path, 
+                                     str(temp_dir), self.partition_res, self.sp_method, self.hybrid_res,
+                                     worker_memory_limit, worker_threads))
+            
+            # Use multiprocessing.Pool with maxtasksperchild=1
+            with Pool(processes=num_workers, maxtasksperchild=1) as pool:
+                completed_count = 0
+                for result in pool.imap_unordered(process_chunk_phase1, all_args):
+                    chunk_id, active_path, deactivated_path, count, timing_info, duration = result
                     all_timing_info.extend(timing_info)
+                    completed_count += 1
                     
                     # Insert results from Parquet files
                     if active_path and Path(active_path).exists():
@@ -786,23 +848,31 @@ class ParallelShortcutProcessor:
                     
                     if deactivated_path and Path(deactivated_path).exists():
                         deact_count = self.con.execute(f"SELECT count(*) FROM '{deactivated_path}'").fetchone()[0]
-                        self.con.execute(f"""
-                            INSERT INTO {self.forward_deactivated_table}
-                            SELECT * FROM '{deactivated_path}'
-                        """)
+                        self.con.execute(f"INSERT INTO {self.forward_deactivated_table} SELECT * FROM '{deactivated_path}'")
                         total_deactivated += deact_count
                         Path(deactivated_path).unlink()
                     
-                    # Delete input chunk Parquet file
                     if chunk_id in chunk_parquet_files and Path(chunk_parquet_files[chunk_id]).exists():
                         Path(chunk_parquet_files[chunk_id]).unlink()
                     
-                    # Batch checkpoint and memory cleanup
-                    if i % 10 == 0:
+                    # Log progress
+                    logger.info(f"  [{completed_count}/{len(chunk_ids)}] Chunk {chunk_id} complete in {duration:.2f}s. {count} active")
+                        
+                    if completed_count % 10 == 0:
                         self.checkpoint()
+                        try:
+                            self.con.execute("PRAGMA shrink_memory")
+                        except:
+                            pass
                         gc.collect()
-                    
-                    logger.info(f"  [{i}/{len(chunk_ids)}] Chunk {chunk_id} complete in {duration:.2f}s. {count} active")
+
+            # [SWAP FIX] Restore Main Process memory limit
+            try:
+                main_mem_env = os.environ.get("DUCKDB_MEMORY_LIMIT", "8GB")
+                self.con.execute(f"SET memory_limit = '{main_mem_env}'")
+                logger.info(f"  [MEMORY] Restoring Main Process limit to {main_mem_env}.")
+            except:
+                pass
         else:
             logger.info(f"  Processing {len(chunk_ids)} chunks sequentially...")
             for i, chunk_id in enumerate(chunk_ids, 1):
@@ -1000,16 +1070,32 @@ class ParallelShortcutProcessor:
         num_workers = self.workers.get('phase4', MAX_WORKERS)
         checkpoint_interval = 10  # Checkpoint every N cells instead of every cell
         
-        # Calculate per-worker memory limit
-        # Allow some overhead for the OS and main process
+        # Calculate per-worker memory limit properly
         try:
             total_ram_gb = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / (1024**3)
         except:
             total_ram_gb = 16 # Default fallback
             
-        # Use 80% of RAM, split between workers
-        worker_memory_gb = max(2, int((total_ram_gb * 0.8) / num_workers))
-        worker_memory_limit = f"{worker_memory_gb}GB"
+        # Account for the main process's DuckDB memory limit
+        main_mem_limit_str = os.environ.get("DUCKDB_MEMORY_LIMIT", "4GB")
+        if "GB" in main_mem_limit_str.upper() or "G" in main_mem_limit_str.upper():
+            main_mem_gb = float(main_mem_limit_str.upper().replace("GB", "").replace("G", ""))
+        else:
+            main_mem_gb = 4.0 # Fallback
+            
+        # Available RAM for all workers combined
+        # We assume 1.5GB overhead for OS and Python structures in main process
+        # PLUS roughly 1GB overhead per worker for Python objects outside DuckDB's limit
+        available_for_workers = (total_ram_gb - main_mem_gb - 1.5) 
+        
+        # We use a more conservative 0.5 multiplier to prevent SWAP usage
+        # This ensures we leave plenty of room for Linux disk buffers
+        worker_memory_gb = max(1, int((available_for_workers * 0.5) / num_workers))
+        
+        # Deduct another 1GB from the DuckDB limit specifically to allot for Python (Pandas/Scipy)
+        # DuckDB limit only restricts its internal buffer cache.
+        duckdb_worker_limit = max(1, worker_memory_gb - 1)
+        worker_memory_limit = f"{duckdb_worker_limit}GB"
         
         # Split CPU threads fairly between workers (e.g., 20 threads / 5 workers = 4 threads each)
         try:
@@ -1022,44 +1108,65 @@ class ParallelShortcutProcessor:
         logger.info(f"  Per-Worker: {worker_memory_limit} RAM, {worker_threads} Thread(s).")
 
         if num_workers > 1:
-            logger.info(f"  Starting with {len(cell_ids)} cells ({total_shortcuts} shortcuts), max {num_workers} workers...")
-            with ProcessPoolExecutor(max_workers=num_workers) as executor:
-                # Submit futures - pass Parquet file paths
-                futures = {}
-                for cell_id in cell_ids:
-                    if cell_id in self.cell_parquet_files:
-                        cell_parquet = self.cell_parquet_files[cell_id]
-                        future = executor.submit(process_chunk_phase4, 
-                            (cell_id, cell_parquet, self.edges_parquet_path, str(temp_dir), 
-                             self.partition_res, self.sp_method, self.hybrid_res, 
-                             worker_memory_limit, worker_threads))
-                        futures[future] = cell_id
-                
-                for i, future in enumerate(as_completed(futures), 1):
-                    cell_id, result_path, count, timing_info, duration = future.result()
+            logger.info(f"  Starting with {len(cell_ids)} cells ({total_shortcuts} shortcuts) in parallel...")
+            logger.info(f"  [MEMORY] Using worker recycling (maxtasksperchild=1) to prevent leaks.")
+            
+            # [SWAP FIX] Reduce Main Process memory limit while workers are running
+            try:
+                self.con.execute("SET memory_limit = '2GB'")
+                logger.info("  [MEMORY] Reducing Main Process limit to 2GB to free RAM for workers.")
+            except:
+                pass
+
+            # Prepare all arguments
+            all_args = []
+            for cell_id in cell_ids:
+                if cell_id in self.cell_parquet_files:
+                    cell_parquet = self.cell_parquet_files[cell_id]
+                    all_args.append((cell_id, cell_parquet, self.edges_parquet_path, str(temp_dir), 
+                                     self.partition_res, self.sp_method, self.hybrid_res, 
+                                     worker_memory_limit, worker_threads))
+            
+            # Use multiprocessing.Pool with maxtasksperchild=1
+            with Pool(processes=num_workers, maxtasksperchild=1) as pool:
+                completed_count = 0
+                for result in pool.imap_unordered(process_chunk_phase4, all_args):
+                    cell_id, result_path, count, timing_info, duration = result
                     all_timing_info.extend(timing_info)
+                    completed_count += 1
                     
-                    # Insert from Parquet file (already on disk, no IPC overhead)
+                    # Insert from Parquet file
                     if result_path and count > 0 and Path(result_path).exists():
-                        self.con.execute(f"""
-                            INSERT INTO {self.backward_deactivated_table}
-                            SELECT * FROM '{result_path}'
-                        """)
+                        self.con.execute(f"INSERT INTO {self.backward_deactivated_table} SELECT * FROM '{result_path}'")
                         total_deactivated += count
-                        Path(result_path).unlink()  # Delete temp result Parquet file
+                        Path(result_path).unlink()
                     
-                    # Delete the cell input Parquet file (no longer needed)
+                    # Delete input files
                     if cell_id in self.cell_parquet_files:
                         cell_parquet = Path(self.cell_parquet_files[cell_id])
                         if cell_parquet.exists():
                             cell_parquet.unlink()
                     
-                    # Batch checkpoint - only every N cells
-                    if i % checkpoint_interval == 0:
-                        self.checkpoint()
-                        gc.collect()
+                    # Log progress and Main Process memory
+                    log_memory(logger, f"Main Process Phase 4 Progress [{completed_count}/{len(cell_ids)}]")
+                    logger.info(f"  [{completed_count}/{len(cell_ids)}] Cell {cell_id} complete in {duration:.2f}s: {count} shortcuts, total: {total_deactivated}")
                     
-                    logger.info(f"  [{i}/{len(futures)}] Cell {cell_id} complete in {duration:.2f}s: {count} shortcuts, total: {total_deactivated}")
+                    # Batch checkpoint and cache release
+                    if completed_count % 5 == 0:
+                        self.checkpoint()
+                        try:
+                            self.con.execute("PRAGMA shrink_memory")
+                        except:
+                            pass
+                        gc.collect()
+            
+            # [SWAP FIX] Restore Main Process memory limit
+            try:
+                main_mem_env = os.environ.get("DUCKDB_MEMORY_LIMIT", "8GB")
+                self.con.execute(f"SET memory_limit = '{main_mem_env}'")
+                logger.info(f"  [MEMORY] Restoring Main Process limit to {main_mem_env}.")
+            except:
+                pass
         else:
             logger.info(f"  Starting with {len(cell_ids)} cells ({total_shortcuts} shortcuts) sequentially...")
             for i, cell_id in enumerate(cell_ids, 1):
@@ -1125,7 +1232,7 @@ class ParallelShortcutProcessor:
         return total_deactivated
 
     def checkpoint(self):
-        self.con.execute("CHECKPOINT")
+        utils.checkpoint(self.con)
 
     def vacuum(self):
         self.con.execute("VACUUM")

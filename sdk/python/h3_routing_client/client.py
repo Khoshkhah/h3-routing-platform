@@ -169,7 +169,10 @@ class RoutingClient:
                 "target_lat": end_lat, "target_lon": end_lng,
                 "search_mode": mode,
                 "num_candidates": num_candidates,
-                "search_radius": 2000.0 
+                "search_radius": 2000.0,
+                "algorithm": algorithm,
+                "include_alternative": include_alternative,
+                "penalty_factor": penalty_factor
             }
             try:
                 resp = requests.get(f"{self.base_url}/route", params=params, timeout=10)
@@ -185,7 +188,8 @@ class RoutingClient:
                     runtime_ms=data.get("runtime_ms"),
                     path=data.get("path"),
                     geojson=data.get("geojson"),
-                    error=data.get("error")
+                    error=data.get("error"),
+                    alternative_route=data.get("alternative_route")
                 )
             except Exception as e:
                 return RouteResponse(success=False, error=str(e))

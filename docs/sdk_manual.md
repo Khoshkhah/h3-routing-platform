@@ -119,7 +119,7 @@ Calculate the shortest path between two points.
 | `end_lat`, `end_lng` | `float` | *required* | Target coordinates. |
 | `mode` | `str` | `"knn"` | Lookup mode: `knn`, `radius`, `one_to_one`. |
 | `num_candidates` | `int` | `3` | Candidates for `knn` mode. |
-| `algorithm` | `str` | `"bi_lca_res_sp"` | Algorithm: `bi_classic_sp`, `bi_dijkstra_sp`, `m2m_classic_sp`, etc. |
+| `algorithm` | `str` | `"pruned"` | Algorithm: `uni_dijkstra`, `bi_dijkstra`, `classic`, `uni_lca`, `bi_lca`, `pruned` (bi_lca_res), `m2m`. |
 | `include_alternative` | `bool` | `False` | If `True`, also compute an alternative route. |
 | `penalty_factor` | `float` | `2.0` | Penalty multiplier for alternative route nodes. |
 

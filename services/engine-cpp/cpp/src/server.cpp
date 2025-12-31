@@ -584,6 +584,8 @@ int main(int argc, char* argv[]) {
             double radius = 500.0;
             std::string algorithm = "pruned";
             std::string mode = "knn";
+            bool include_alternative = false;
+            double penalty_factor = 2.0;
             
             if (req.method == "GET"_method) {
                 // GET parameters
@@ -600,6 +602,8 @@ int main(int argc, char* argv[]) {
                 if (req.url_params.get("max_candidates")) max_candidates = std::stoi(req.url_params.get("max_candidates"));
                 if (req.url_params.get("search_radius")) radius = std::stod(req.url_params.get("search_radius"));
                 if (req.url_params.get("search_mode")) mode = req.url_params.get("search_mode");
+                if (req.url_params.get("include_alternative")) include_alternative = (std::string(req.url_params.get("include_alternative")) == "true");
+                if (req.url_params.get("penalty_factor")) penalty_factor = std::stod(req.url_params.get("penalty_factor"));
             } else {
                 // POST body
                 auto body = json::parse(req.body);
@@ -612,6 +616,8 @@ int main(int argc, char* argv[]) {
                 radius = body.value("search_radius", body.value("radius", 500.0));
                 algorithm = body.value("algorithm", "pruned");
                 mode = body.value("mode", body.value("search_mode", "knn"));
+                include_alternative = body.value("include_alternative", false);
+                penalty_factor = body.value("penalty_factor", 2.0);
             }
             
             // Check expand param (default true for backward compatibility)
@@ -655,6 +661,8 @@ int main(int argc, char* argv[]) {
                     result = ds->graph.query_unidirectional(source, target);
                 } else if (algorithm == "bidijkstra") {
                     result = ds->graph.query_bidijkstra(source, target);
+                } else if (algorithm == "dijkstra") {
+                    result = ds->graph.query_dijkstra(source, target);
                 } else {
                     result = ds->graph.query_classic(source, target);
                 }
@@ -748,6 +756,39 @@ int main(int argc, char* argv[]) {
                     {"shortcut_path", result.path},
                     {"geojson", geojson}
                 };
+                
+                // Handle Alternative Route (Two-Pass Logic)
+                if (include_alternative && result.reachable) {
+                    std::vector<uint32_t> shortest_path_expanded = expanded_path;
+                    if (shortest_path_expanded.empty()) {
+                        shortest_path_expanded = ds->graph.expand_path(result.path);
+                    }
+                    
+                    uint32_t best_src = result.path.front();
+                    uint32_t best_tgt = result.path.back();
+                    
+                    QueryResult alt_result = ds->graph.query_classic_alt(best_src, best_tgt, shortest_path_expanded, penalty_factor);
+                    
+                    if (alt_result.reachable) {
+                        std::vector<uint32_t> alt_expanded = ds->graph.expand_path(alt_result.path);
+                        double alt_dist_meters = calculate_distance_meters(*ds, alt_expanded);
+                        json alt_geojson = build_geojson(*ds, alt_expanded);
+                        
+                        // Trim Alt GeoJSON
+                        if (alt_geojson != nullptr && alt_geojson.contains("geometry")) {
+                            auto trimmed = trim_geojson_coords(alt_geojson["geometry"]["coordinates"], start_lat, start_lng, end_lat, end_lng);
+                            alt_geojson["geometry"]["coordinates"] = trimmed;
+                        }
+                        
+                        response["alternative_route"] = {
+                            {"distance", alt_result.distance},
+                            {"distance_meters", alt_dist_meters},
+                            {"path", alt_expanded},
+                            {"shortcut_path", alt_result.path},
+                            {"geojson", alt_geojson}
+                        };
+                    }
+                }
                 response["timing_breakdown"] = {
                     {"find_nearest_us", nearest_us},
                     {"search_us", search_us},
