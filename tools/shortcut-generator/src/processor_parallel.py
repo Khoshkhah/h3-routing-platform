@@ -74,7 +74,7 @@ def process_chunk_phase1(args):
         con.execute("""
             CREATE TABLE deactivated (
                 from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER,
-                lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, 
+                lca_res TINYINT, inner_cell BIGINT, outer_cell BIGINT, 
                 inner_res TINYINT, outer_res TINYINT
             )
         """)
@@ -107,7 +107,7 @@ def process_chunk_phase1(args):
             # Collect deactivated shortcuts
             con.execute("""
                 INSERT INTO deactivated
-                SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, inner_res, outer_res
+                SELECT from_edge, to_edge, cost, via_edge, lca_res::TINYINT as lca_res, inner_cell, outer_cell, inner_res, outer_res
                 FROM shortcuts_expanded WHERE current_cell IS NULL
             """)
             
@@ -163,7 +163,7 @@ def process_chunk_phase4(args):
     Writes results to Parquet file to avoid large DataFrame IPC.
     Returns: (cell_id, result_path, count, timing_info, duration)
     """
-    cell_id, cell_parquet_path, edges_parquet_path, temp_dir, partition_res, sp_method, hybrid_res = args
+    cell_id, cell_parquet_path, edges_parquet_path, temp_dir, partition_res, sp_method, hybrid_res, worker_memory, worker_threads = args
     
     timing_info = []  # List of (res, method, time)
     start_time = time.time()
@@ -173,6 +173,12 @@ def process_chunk_phase4(args):
         # Worker uses disk-backed DuckDB (spills to disk, manages memory)
         worker_db_path = f"{temp_dir}/worker_{cell_id}.db"
         con = duckdb.connect(worker_db_path)
+        
+        # Apply worker limits
+        if worker_memory:
+            con.execute(f"SET memory_limit = '{worker_memory}'")
+        if worker_threads:
+            con.execute(f"SET threads = {worker_threads}")
         
         # Register H3 UDFs
         con.create_function("h3_lca", utils._find_lca_impl, ["BIGINT", "BIGINT"], "BIGINT")
@@ -204,7 +210,7 @@ def process_chunk_phase4(args):
         con.execute("""
             CREATE TABLE deactivated (
                 from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER,
-                lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, 
+                lca_res TINYINT, inner_cell BIGINT, outer_cell BIGINT, 
                 inner_res TINYINT, outer_res TINYINT
             )
         """)
@@ -214,7 +220,7 @@ def process_chunk_phase4(args):
             # First: Deactivate shortcuts where res > max(inner_res, outer_res)
             con.execute(f"""
                 INSERT INTO deactivated
-                SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, 
+                SELECT from_edge, to_edge, cost, via_edge, lca_res::TINYINT as lca_res, inner_cell, outer_cell, 
                        inner_res, outer_res
                 FROM cell_data
                 WHERE {res} > GREATEST(inner_res, outer_res)
@@ -267,17 +273,28 @@ def process_chunk_phase4(args):
         """)
         
         # Get final count and write to Parquet (avoids large DataFrame IPC)
-        final_count = con.execute("SELECT count(*) FROM deactivated").fetchone()[0]
+        total_deactivated = con.execute("SELECT count(*) FROM deactivated").fetchone()[0]
         
-        if final_count > 0:
+        if total_deactivated > 0:
             con.execute(f"COPY deactivated TO '{result_path}' (FORMAT PARQUET)")
         else:
             result_path = None
         
         con.close()
-        # Cleanup worker DB file
-        Path(worker_db_path).unlink(missing_ok=True)
-        return (cell_id, result_path, final_count, timing_info, time.time() - start_time)
+        
+        # Cleanup
+        if Path(worker_db_path).exists():
+            Path(worker_db_path).unlink()
+            
+        duration = time.time() - start_time
+        
+        # Log peak memory for this worker
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # Linux returns maxrss in KB
+        mb = usage / 1024
+        logger.debug(f"  [WORKER {cell_id}] Peak memory: {mb:.2f} MB, Duration: {duration:.2f}s")
+        
+        return (cell_id, result_path, total_deactivated, timing_info, duration)
     
     except Exception as e:
         import traceback
@@ -384,7 +401,7 @@ def _process_cell_forward_worker(con, table_name: str, method: str = "SCIPY", nu
         con.execute(f"""
             CREATE TABLE {table_name} (
                 from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER,
-                lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, 
+                lca_res TINYINT, inner_cell BIGINT, outer_cell BIGINT, 
                 inner_res TINYINT, outer_res TINYINT
             )
         """)
@@ -563,7 +580,7 @@ def _run_shortest_paths_worker(con, input_table: str, method: str = "SCIPY", num
             CREATE OR REPLACE TABLE shortcuts_next_enriched AS
             SELECT 
                 s.from_edge, s.to_edge, s.cost, s.via_edge,
-                GREATEST(e1.lca_res, e2.lca_res) as lca_res,
+                GREATEST(e1.lca_res, e2.lca_res)::TINYINT as lca_res,
                 h3_lca(e1.to_cell, e2.from_cell)::BIGINT as inner_cell,
                 h3_lca(e1.from_cell, e2.to_cell)::BIGINT as outer_cell,
                 h3_resolution(h3_lca(e1.to_cell, e2.from_cell))::TINYINT as inner_res,
@@ -579,7 +596,7 @@ def _run_shortest_paths_worker(con, input_table: str, method: str = "SCIPY", num
         con.execute(f"""
             CREATE OR REPLACE TABLE shortcuts_next AS 
             SELECT from_edge, to_edge, cost, via_edge, 
-                   0 as lca_res, 0::BIGINT as inner_cell, 0::BIGINT as outer_cell, 
+                   0::TINYINT as lca_res, 0::BIGINT as inner_cell, 0::BIGINT as outer_cell, 
                    0::TINYINT as inner_res, 0::TINYINT as outer_res
             FROM {input_table} WHERE 1=0
         """)
@@ -619,14 +636,14 @@ class ParallelShortcutProcessor:
         self.con.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.forward_deactivated_table} (
                 from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER,
-                lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, 
+                lca_res TINYINT, inner_cell BIGINT, outer_cell BIGINT, 
                 inner_res TINYINT, outer_res TINYINT
             )
         """)
         self.con.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.backward_deactivated_table} (
                 from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER,
-                lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, 
+                lca_res TINYINT, inner_cell BIGINT, outer_cell BIGINT, 
                 inner_res TINYINT, outer_res TINYINT
             )
         """)
@@ -983,6 +1000,27 @@ class ParallelShortcutProcessor:
         num_workers = self.workers.get('phase4', MAX_WORKERS)
         checkpoint_interval = 10  # Checkpoint every N cells instead of every cell
         
+        # Calculate per-worker memory limit
+        # Allow some overhead for the OS and main process
+        try:
+            total_ram_gb = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / (1024**3)
+        except:
+            total_ram_gb = 16 # Default fallback
+            
+        # Use 80% of RAM, split between workers
+        worker_memory_gb = max(2, int((total_ram_gb * 0.8) / num_workers))
+        worker_memory_limit = f"{worker_memory_gb}GB"
+        
+        # Split CPU threads fairly between workers (e.g., 20 threads / 5 workers = 4 threads each)
+        try:
+            total_threads = cpu_count()
+        except:
+            total_threads = 4
+        worker_threads = max(1, total_threads // num_workers)
+        
+        logger.info(f"  Resource Allocation: {total_ram_gb:.1f}GB RAM, {total_threads} CPUs.")
+        logger.info(f"  Per-Worker: {worker_memory_limit} RAM, {worker_threads} Thread(s).")
+
         if num_workers > 1:
             logger.info(f"  Starting with {len(cell_ids)} cells ({total_shortcuts} shortcuts), max {num_workers} workers...")
             with ProcessPoolExecutor(max_workers=num_workers) as executor:
@@ -993,7 +1031,8 @@ class ParallelShortcutProcessor:
                         cell_parquet = self.cell_parquet_files[cell_id]
                         future = executor.submit(process_chunk_phase4, 
                             (cell_id, cell_parquet, self.edges_parquet_path, str(temp_dir), 
-                             self.partition_res, self.sp_method, self.hybrid_res))
+                             self.partition_res, self.sp_method, self.hybrid_res, 
+                             worker_memory_limit, worker_threads))
                         futures[future] = cell_id
                 
                 for i, future in enumerate(as_completed(futures), 1):
@@ -1029,7 +1068,9 @@ class ParallelShortcutProcessor:
                 
                 cell_parquet = self.cell_parquet_files[cell_id]
                 args = (cell_id, cell_parquet, self.edges_parquet_path, str(temp_dir), 
-                        self.partition_res, self.sp_method, self.hybrid_res)
+                        self.partition_res, self.sp_method, self.hybrid_res,
+                        worker_memory_limit, worker_threads)
+                
                 cell_id, result_path, count, timing_info, duration = process_chunk_phase4(args)
                 all_timing_info.extend(timing_info)
                 
@@ -1115,7 +1156,7 @@ class ParallelShortcutProcessor:
         self.con.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.backward_deactivated_table} (
                 from_edge INTEGER, to_edge INTEGER, cost FLOAT, via_edge INTEGER,
-                lca_res INTEGER, inner_cell BIGINT, outer_cell BIGINT, inner_res TINYINT, outer_res TINYINT, current_cell BIGINT
+                lca_res TINYINT, inner_cell BIGINT, outer_cell BIGINT, inner_res TINYINT, outer_res TINYINT, current_cell BIGINT
             )
         """)
 
@@ -1356,7 +1397,7 @@ class ParallelShortcutProcessor:
                 CREATE OR REPLACE TABLE shortcuts_next_enriched AS
                 SELECT 
                     s.from_edge, s.to_edge, s.cost, s.via_edge,
-                    GREATEST(e1.lca_res, e2.lca_res) as lca_res,
+                    GREATEST(e1.lca_res, e2.lca_res)::TINYINT as lca_res,
                     h3_lca(e1.to_cell, e2.from_cell)::BIGINT as inner_cell,
                     h3_lca(e1.from_cell, e2.to_cell)::BIGINT as outer_cell,
                     h3_resolution(h3_lca(e1.to_cell, e2.from_cell))::TINYINT as inner_res,
@@ -1371,7 +1412,7 @@ class ParallelShortcutProcessor:
             self.con.execute(f"""
                 CREATE OR REPLACE TABLE shortcuts_next AS 
                 SELECT from_edge, to_edge, cost, via_edge, 
-                       0 as lca_res, 0::BIGINT as inner_cell, 0::BIGINT as outer_cell, 
+                       0::TINYINT as lca_res, 0::BIGINT as inner_cell, 0::BIGINT as outer_cell, 
                        0::TINYINT as inner_res, 0::TINYINT as outer_res
                 FROM {input_table} WHERE 1=0
             """)

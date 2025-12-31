@@ -137,7 +137,7 @@ def read_edges(con: duckdb.DuckDBPyConnection, file_path: str) -> None:
     """Load edges into 'edges' table."""
     con.execute(f"""
         CREATE OR REPLACE TABLE edges AS 
-        SELECT edge_index AS id, from_cell, to_cell, lca_res 
+        SELECT edge_index AS id, from_cell, to_cell, lca_res::TINYINT as lca_res
         FROM read_csv_auto('{file_path}')
     """)
 
@@ -189,7 +189,7 @@ def assign_cell_forward(con: duckdb.DuckDBPyConnection, current_res: int) -> Non
                 e2.from_cell AS b_from, 
                 e2.lca_res AS lca_out,
                 -- Computations
-                GREATEST(e1.lca_res, e2.lca_res) AS lca_res,
+                GREATEST(e1.lca_res, e2.lca_res)::TINYINT AS lca_res,
                 h3_lca(e1.to_cell, e2.from_cell) AS inner_cell,
                 h3_lca(e1.from_cell, e2.to_cell) AS outer_cell
             FROM shortcuts s
@@ -251,7 +251,7 @@ def assign_cell_phase2(con: duckdb.DuckDBPyConnection, current_res: int, chunk_c
                 s.from_edge, s.to_edge, s.cost, s.via_edge,
                 e1.to_cell AS a_to, 
                 e1.from_cell AS a_from, 
-                GREATEST(e1.lca_res, e2.lca_res) AS lca_res,
+                GREATEST(e1.lca_res, e2.lca_res)::TINYINT AS lca_res,
                 h3_lca(e1.to_cell, e2.from_cell) AS inner_cell,
                 h3_lca(e1.from_cell, e2.to_cell) AS outer_cell
             FROM shortcuts s
@@ -296,7 +296,7 @@ def assign_cell_backward(con: duckdb.DuckDBPyConnection, current_res: int) -> No
                 e2.to_cell AS b_to, 
                 e2.from_cell AS b_from, 
                 e2.lca_res AS lca_out,
-                GREATEST(e1.lca_res, e2.lca_res) AS lca_res,
+                GREATEST(e1.lca_res, e2.lca_res)::TINYINT AS lca_res,
                 h3_lca(e1.to_cell, e2.from_cell) AS inner_cell,
                 h3_lca(e1.from_cell, e2.to_cell) AS outer_cell
             FROM shortcuts s
@@ -352,7 +352,7 @@ def assign_cell_backward_from_table(con: duckdb.DuckDBPyConnection, current_res:
                 s.from_edge, s.to_edge, s.cost, s.via_edge,
                 e1.to_cell AS a_to, 
                 e1.from_cell AS a_from, 
-                GREATEST(e1.lca_res, e2.lca_res) AS lca_res,
+                GREATEST(e1.lca_res, e2.lca_res)::TINYINT AS lca_res,
                 h3_lca(e1.to_cell, e2.from_cell) AS inner_cell,
                 h3_lca(e1.from_cell, e2.to_cell) AS outer_cell
             FROM {source_table} s
@@ -390,7 +390,7 @@ def assign_cell_phase2_backward(con: duckdb.DuckDBPyConnection, current_res: int
                 s.from_edge, s.to_edge, s.cost, s.via_edge,
                 e1.to_cell AS a_to, 
                 e1.from_cell AS a_from, 
-                GREATEST(e1.lca_res, e2.lca_res) AS lca_res,
+                GREATEST(e1.lca_res, e2.lca_res)::TINYINT AS lca_res,
                 h3_lca(e1.to_cell, e2.from_cell) AS inner_cell,
                 h3_lca(e1.from_cell, e2.to_cell) AS outer_cell
             FROM shortcuts s
@@ -458,10 +458,10 @@ def add_final_info(con: duckdb.DuckDBPyConnection) -> None:
                 s.*,
                 e1.lca_res AS lca_in,
                 e2.lca_res AS lca_out,
-                GREATEST(e1.lca_res, e2.lca_res) AS lca_res,
-                h3_resolution(h3_lca(e1.to_cell, e2.from_cell)) AS inner_res,
+                GREATEST(e1.lca_res, e2.lca_res)::TINYINT AS lca_res,
+                h3_resolution(h3_lca(e1.to_cell, e2.from_cell))::TINYINT AS inner_res,
                 h3_lca(e1.from_cell, e2.to_cell) AS outer_cell,
-                h3_resolution(h3_lca(e1.from_cell, e2.to_cell)) AS outer_res
+                h3_resolution(h3_lca(e1.from_cell, e2.to_cell))::TINYINT AS outer_res
             FROM shortcuts s
             LEFT JOIN edges e1 ON s.from_edge = e1.id
             LEFT JOIN edges e2 ON s.to_edge = e2.id
