@@ -1,7 +1,7 @@
 paths:
   # project_root is auto-detected by the server
   data_root: "{project_root}/data"
-  boundary_root: "{project_root}/tools/osm-importer/data/boundaries"
+  boundary_root: "{project_root}/tools/duckOSM/data/boundaries"
 
 datasets:
   - name: "somerset"
@@ -15,25 +15,13 @@ datasets:
     description: "Burnaby, British Columbia, Canada"
 
   - name: "vancouver_city"
-    db_path: "{data_root}/Vancouver_City.db"
-    boundary_path: "{boundary_root}/vancouver.geojson"
-    center: [49.25, -123.12]
-    zoom: 12
+    db_path: "{data_root}/vancouver_city.duckdb"
+    boundary_path: "{boundary_root}/vancouver_city.geojson"
     short_name: "Vancouver City"
-    description: "Vancouver proper, British Columbia, Canada"
+    description: "City of Vancouver, British Columbia, Canada"
 
   - name: "metro_vancouver"
-    db_path: "{data_root}/All_Vancouver.db"
-    boundary_path: "/home/kaveh/projects/h3-routing-platform/tools/osm-importer/data/boundaries/All_Vancouver.geojson"
-    center: [49.25, -123.00]
-    zoom: 11
+    db_path: "{data_root}/metro_vancouver.duckdb"
+    boundary_path: "{boundary_root}/metro_vancouver.geojson"
     short_name: "Metro Vancouver"
-    description: "All Greater Vancouver, British Columbia, Canada"
-
-  - name: "cell_832b9bfffffffff"
-    db_path: "{data_root}/cell_832b9bfffffffff.db"
-    boundary_path: "{boundary_root}/cell_832b9bfffffffff.geojson"
-    center: [43.65, -79.38]
-    zoom: 11
-    short_name: "GTA Toronto"
-    description: "Greater Toronto Area, Ontario, Canada"
+    description: "Metro Vancouver Regional District, British Columbia, Canada"
