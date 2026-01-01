@@ -1934,24 +1934,39 @@ class ParallelShortcutProcessor:
     def consolidate_database(self):
         """
         Finalizes the database: deduplicates shortcuts and adds final metadata.
+        Skips deduplication if shortcuts table already exists with data.
         Does NOT export to file or close connection.
         """
         log_conf.log_section(logger, "CONSOLIDATING DATABASE")
         
-        self.con.execute(f"""
-            CREATE OR REPLACE TABLE shortcuts_final AS
-            SELECT from_edge, to_edge, MIN(cost) as cost, arg_min(via_edge, cost) as via_edge
-            FROM {self.backward_deactivated_table}
-            GROUP BY from_edge, to_edge
-        """)
+        # Check if shortcuts already exists with data (from FINALIZE step)
+        shortcuts_exists = False
+        try:
+            count = self.con.execute("SELECT count(*) FROM shortcuts").fetchone()[0]
+            shortcuts_exists = count > 0
+        except:
+            pass
         
-        final_count = self.con.sql("SELECT COUNT(*) FROM shortcuts_final").fetchone()[0]
-        logger.info(f"Final Count (after dedup): {final_count}")
-        
-        self.con.execute("DROP TABLE IF EXISTS shortcuts")
-        self.con.execute("ALTER TABLE shortcuts_final RENAME TO shortcuts")
+        if shortcuts_exists:
+            final_count = count
+            logger.info(f"Final Count (after dedup): {final_count}")
+        else:
+            # Only deduplicate if not already done
+            self.con.execute(f"""
+                CREATE OR REPLACE TABLE shortcuts_final AS
+                SELECT from_edge, to_edge, MIN(cost) as cost, arg_min(via_edge, cost) as via_edge
+                FROM {self.backward_deactivated_table}
+                GROUP BY from_edge, to_edge
+            """)
+            
+            final_count = self.con.sql("SELECT COUNT(*) FROM shortcuts_final").fetchone()[0]
+            logger.info(f"Final Count (after dedup): {final_count}")
+            
+            self.con.execute("DROP TABLE IF EXISTS shortcuts")
+            self.con.execute("ALTER TABLE shortcuts_final RENAME TO shortcuts")
 
-        utils.add_final_info(self.con)
+            utils.add_final_info(self.con)
+
         
         # Create self-contained data in output schema for routing engine
         try:

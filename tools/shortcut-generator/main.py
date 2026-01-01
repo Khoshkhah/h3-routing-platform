@@ -317,12 +317,13 @@ def run_partitioned_parallel(cfg):
     # ============================================================
     log_conf.log_section(logger, "CONSOLIDATING DATABASE")
     
-    # Use processor method to consolidate
-    # This handles both CSV-based loading (if fresh) and DB maintenance
+    # Use processor method to consolidate (creates edges table in output schema)
+    # The shortcuts table was already created in FINALIZE, so consolidate_database
+    # will skip deduplication and only materialize the edges table
     processor.consolidate_database()
     processor.log_database_stats()
     
-    # Save output if configured (and not using existing DB as sink)
+    # Save boundary if configured (and not using existing DB as sink)
     if not cfg.input.database_path:
         processor.save_output(f"{cfg.output.directory}/{cfg.output.shortcuts_file}")
         logger.info(f"Loading boundary from: {boundary_path}")
@@ -332,11 +333,6 @@ def run_partitioned_parallel(cfg):
         logger.info("Stored boundary GeoJSON in database")
     else:
         logger.info("No boundary file provided, skipping boundary storage")
-    
-    # Consolidate and Checkpoint
-    logger.info("CONSOLIDATING DATABASE")
-    logger.info("=" * 60)
-    processor.consolidate_database()
     
     # Save output (only if NOT using existing database path, per user request)
     if not cfg.input.database_path:
@@ -348,6 +344,7 @@ def run_partitioned_parallel(cfg):
 
     # Final stats
     processor.log_database_stats()
+
     
     # Cleanup: Drop temporary tables, keep only essential ones
     # Essential: edges, shortcuts, dataset_info, elementary_shortcuts (for debugging)
