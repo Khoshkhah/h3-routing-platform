@@ -152,18 +152,56 @@ LINE_WIDTH = 4
 
 
 # --- DATA LOADING ---
-@st.cache_data
-def fetch_network_data(db_path, mode):
+mtime = Path(__file__).stat().st_mtime
+
+@st.cache_data(hash_funcs={duckdb.DuckDBPyConnection: id})
+def fetch_network_data(db_path, mode, cache_key=mtime):
+
+    # Discover available columns in the table
+    try:
+        cols_df = con.execute(f"DESCRIBE {mode}.edges").df()
+        available_cols = set(cols_df['column_name'].tolist())
+    except Exception as e:
+        st.error(f"Error discovering columns for {mode}: {e}")
+        return None
+
+    # Define desired columns and their fallbacks
+    # (Select only what exists to avoid Binder errors)
+    select_fields = []
+    
+    # Priority columns for visualization
+    if 'geometry' in available_cols: select_fields.append("ST_AsText(geometry) as wkt_geom")
+    else: return None # Can't visualize without geometry
+    
+    if 'osm_id' in available_cols: select_fields.append("osm_id")
+    elif 'id' in available_cols: select_fields.append("id as osm_id")
+    else: select_fields.append("0 as osm_id")
+    
+    if 'name' in available_cols: select_fields.append("name")
+    else: select_fields.append("'Unknown' as name")
+    
+    if 'highway' in available_cols: select_fields.append("highway")
+    else: select_fields.append("'road' as highway")
+    
+    if 'is_reverse' in available_cols: select_fields.append("is_reverse")
+    else: select_fields.append("false as is_reverse")
+    
+    if 'length_m' in available_cols: select_fields.append("round(length_m, 1) as length_m")
+    elif 'length' in available_cols: select_fields.append("round(length, 1) as length_m")
+    else: select_fields.append("0.0 as length_m")
+    
+    if 'maxspeed_kmh' in available_cols: select_fields.append("round(maxspeed_kmh, 1) as speed_kmh")
+    elif 'cost' in available_cols: select_fields.append("round(cost, 1) as speed_kmh")
+    else: select_fields.append("0.0 as speed_kmh")
+
     query = f"""
         SELECT 
-            osm_id, name, highway, is_reverse,
-            round(length_m, 1) as length_m, 
-            round(maxspeed_kmh, 1) as speed_kmh,
-            ST_AsText(geometry) as wkt_geom
+            {', '.join(select_fields)}
         FROM {mode}.edges
     """
     df = con.execute(query).df()
     if df.empty: return None
+    
     
     # Helper for Python-side parallel offset
     def parse_path_with_offset(row):
@@ -191,21 +229,35 @@ def fetch_network_data(db_path, mode):
     df['color'] = [mode_colors.get(mode.lower(), [201, 209, 217, 180])] * len(df)
     return df
 
-@st.cache_data
-def fetch_shortcut_data(db_path):
+@st.cache_data(hash_funcs={duckdb.DuckDBPyConnection: id})
+def fetch_shortcut_data(db_path, cache_key=mtime):
+    # Discover columns in shortcuts.edges
+    try:
+        cols_df = con.execute("DESCRIBE shortcuts.edges").df()
+        available_cols = set(cols_df['column_name'].tolist())
+    except Exception as e:
+        return None
+
     # Fetch shortcuts and their corresponding edge geometries
-    # Note: This is an expensive join for large datasets
-    query = """
+    select_fields = ["s.from_edge", "s.to_edge", "s.cost"]
+    
+    if 'geometry' in available_cols: select_fields.append("ST_AsText(e.geometry) as wkt_geom")
+    else: return None
+    
+    if 'length' in available_cols: select_fields.append("round(e.length, 1) as length_m")
+    elif 'length_m' in available_cols: select_fields.append("round(e.length_m, 1) as length_m")
+    else: select_fields.append("0.0 as length_m")
+
+    query = f"""
         SELECT 
-            s.from_edge, s.to_edge, s.cost,
-            round(e.length, 1) as length_m,
-            ST_AsText(e.geometry) as wkt_geom
+            {', '.join(select_fields)}
         FROM shortcuts.shortcuts s
         JOIN shortcuts.edges e ON s.from_edge = e.id
-        LIMIT 50000 -- Limit shortcuts slightly for performance
+        LIMIT 50000 
     """
     df = con.execute(query).df()
     if df.empty: return None
+
     
     def parse_wkt(wkt_str):
         try:
@@ -221,7 +273,8 @@ def fetch_shortcut_data(db_path):
 
 all_layers = []
 for mode in selected_modes:
-    df = fetch_network_data(selected_db, mode)
+    df = fetch_network_data(selected_db, mode, cache_key=mtime)
+
     if df is not None:
         all_layers.append(pdk.Layer(
             "PathLayer",
@@ -235,7 +288,8 @@ for mode in selected_modes:
         ))
 
 if show_shortcuts:
-    sdf = fetch_shortcut_data(selected_db)
+    sdf = fetch_shortcut_data(selected_db, cache_key=mtime)
+
     if sdf is not None:
         all_layers.append(pdk.Layer(
             "PathLayer",
@@ -258,14 +312,15 @@ if all_layers:
             lat, lon, zoom = meta
         else:
             first_mode = selected_modes[0]
-            first_df = fetch_network_data(selected_db, first_mode)
-            first_path = list(first_df['path'])[0]
-            lat, lon, zoom = first_path[0][1], first_path[0][0], 13
+            first_df = fetch_network_data(selected_db, first_mode, cache_key=mtime)
+            if first_df is not None and not first_df.empty and len(first_df['path']) > 0:
+                first_path = list(first_df['path'])[0]
+                lat, lon, zoom = first_path[0][1], first_path[0][0], 13
+            else:
+                lat, lon, zoom = 49.2827, -123.1207, 12 # Vancouver fallback
     except:
-        first_mode = selected_modes[0]
-        first_df = fetch_network_data(selected_db, first_mode)
-        first_path = list(first_df['path'])[0]
-        lat, lon, zoom = first_path[0][1], first_path[0][0], 13
+        lat, lon, zoom = 49.2827, -123.1207, 12 # Vancouver fallback
+    
     
     view_state = pdk.ViewState(
         longitude=lon,
