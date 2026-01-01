@@ -1,0 +1,39 @@
+cells:
+  - kind: 2
+    languageId: sql
+    value: |-
+      -- Count total shortcuts
+      SELECT COUNT(*) as total_shortcuts FROM shortcuts;
+    metadata: {}
+  - kind: 2
+    languageId: sql
+    value: |-
+      -- View sample shortcuts  
+      SELECT * FROM shortcuts LIMIT 10;
+    metadata: {}
+  - kind: 2
+    languageId: sql
+    value: |-
+      -- Show table schema
+      DESCRIBE shortcuts;
+    metadata: {}
+  - kind: 2
+    languageId: sql
+    value: |
+      SHOW TABLES;
+    metadata: {}
+  - kind: 2
+    languageId: sql
+    value: |-
+      -- Count shortcuts by inside flag (-1, 0, 1)
+      SELECT inside, COUNT(*) as count
+      FROM shortcuts
+      GROUP BY inside
+      ORDER BY inside;
+    metadata: {}
+metadata:
+  conn:
+    id: -KBzOBK8osNwwwLArGYul
+    name: Somerset
+  database: Somerset
+  schema: main

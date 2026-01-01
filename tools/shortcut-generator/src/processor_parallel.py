@@ -64,9 +64,7 @@ def process_chunk_phase1(args):
             con.execute(f"SET threads = {worker_threads}")
         
         # Register H3 UDFs
-        con.create_function("h3_lca", utils._find_lca_impl, ["BIGINT", "BIGINT"], "BIGINT")
-        con.create_function("h3_resolution", utils._find_resolution_impl, ["BIGINT"], "INTEGER")
-        con.create_function("h3_parent", utils._get_parent_cell_impl, ["BIGINT", "INTEGER"], "BIGINT")
+        utils.register_h3_udfs(con)
         
         # Load data from Parquet files
         con.execute(f"CREATE TABLE edges AS SELECT * FROM '{edges_parquet_path}'")
@@ -195,9 +193,7 @@ def process_chunk_phase4(args):
             con.execute(f"SET threads = {worker_threads}")
         
         # Register H3 UDFs
-        con.create_function("h3_lca", utils._find_lca_impl, ["BIGINT", "BIGINT"], "BIGINT")
-        con.create_function("h3_resolution", utils._find_resolution_impl, ["BIGINT"], "INTEGER")
-        con.create_function("h3_parent", utils._get_parent_cell_impl, ["BIGINT", "INTEGER"], "BIGINT")
+        utils.register_h3_udfs(con)
         
         # Use a VIEW for cell data to stream from Parquet instead of loading everything
         # This prevents the initial memory/disk spike of materializing the table
@@ -334,8 +330,8 @@ def _assign_cell_to_shortcuts_worker(con, res: int, input_table: str):
             CREATE TABLE {input_table}_tmp AS
             SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell, 
                    inner_res, outer_res, 
-                   0::BIGINT AS current_cell_in, 
-                   0::BIGINT AS current_cell_out
+                   0 AS current_cell_in, 
+                   0 AS current_cell_out
             FROM {input_table}
         """)
     else:
@@ -346,10 +342,10 @@ def _assign_cell_to_shortcuts_worker(con, res: int, input_table: str):
                 from_edge, to_edge, cost, via_edge, lca_res, 
                 inner_cell, outer_cell, inner_res, outer_res,
                 CASE WHEN lca_res <= {res} AND inner_res >= {res} 
-                     THEN h3_parent(inner_cell::BIGINT, {res}) 
+                     THEN h3_parent(inner_cell, {res}) 
                      ELSE NULL END AS current_cell_in,
                 CASE WHEN lca_res <= {res} AND outer_res >= {res} 
-                     THEN h3_parent(outer_cell::BIGINT, {res}) 
+                     THEN h3_parent(outer_cell, {res}) 
                      ELSE NULL END AS current_cell_out
             FROM {input_table}
         """)
@@ -436,8 +432,6 @@ def process_chunk_phase2(args):
     
     con = duckdb.connect(":memory:")
     con.create_function("h3_lca", utils._find_lca_impl, ["BIGINT", "BIGINT"], "BIGINT")
-    con.create_function("h3_resolution", utils._find_resolution_impl, ["BIGINT"], "INTEGER")
-    con.create_function("h3_parent", utils._get_parent_cell_impl, ["BIGINT", "INTEGER"], "BIGINT")
     
     start_time = time.time()
     
@@ -548,7 +542,7 @@ def _run_shortest_paths_worker(con, input_table: str, method: str = "SCIPY", num
     con.execute("DROP TABLE IF EXISTS sp_input")
     con.execute(f"""
         CREATE TEMPORARY TABLE sp_input AS 
-        SELECT from_edge, to_edge, cost, via_edge, current_cell::BIGINT as current_cell 
+        SELECT from_edge, to_edge, cost, via_edge, current_cell as current_cell 
         FROM {input_table}
     """)
     
@@ -601,8 +595,8 @@ def _run_shortest_paths_worker(con, input_table: str, method: str = "SCIPY", num
             SELECT 
                 s.from_edge, s.to_edge, s.cost, s.via_edge,
                 GREATEST(e1.lca_res, e2.lca_res)::TINYINT as lca_res,
-                h3_lca(e1.to_cell, e2.from_cell)::BIGINT as inner_cell,
-                h3_lca(e1.from_cell, e2.to_cell)::BIGINT as outer_cell,
+                h3_lca(e1.to_cell, e2.from_cell) as inner_cell,
+                h3_lca(e1.from_cell, e2.to_cell) as outer_cell,
                 h3_resolution(h3_lca(e1.to_cell, e2.from_cell))::TINYINT as inner_res,
                 h3_resolution(h3_lca(e1.from_cell, e2.to_cell))::TINYINT as outer_res
             FROM shortcuts_next s
@@ -616,7 +610,7 @@ def _run_shortest_paths_worker(con, input_table: str, method: str = "SCIPY", num
         con.execute(f"""
             CREATE OR REPLACE TABLE shortcuts_next AS 
             SELECT from_edge, to_edge, cost, via_edge, 
-                   0::TINYINT as lca_res, 0::BIGINT as inner_cell, 0::BIGINT as outer_cell, 
+                   0::TINYINT as lca_res, 0 as inner_cell, 0 as outer_cell, 
                    0::TINYINT as inner_res, 0::TINYINT as outer_res
             FROM {input_table} WHERE 1=0
         """)
@@ -632,7 +626,8 @@ class ParallelShortcutProcessor:
     def __init__(self, db_path: str, forward_deactivated_table: str, backward_deactivated_table: str, 
                  partition_res: int = 7, elementary_table: str = "elementary_table",
                  sp_method: str = "HYBRID", hybrid_res: int = 10, worker_config: dict = None,
-                 memory_config: dict = None):
+                 memory_config: dict = None, input_schema: str = "main", output_schema: str = "shortcuts",
+                 fresh_start: bool = False, district_name: str = "district"):
         self.db_path = db_path
         self.con = utils.initialize_duckdb(db_path)
         self.forward_deactivated_table = forward_deactivated_table
@@ -642,6 +637,17 @@ class ParallelShortcutProcessor:
         self.sp_method = sp_method
         self.hybrid_res = hybrid_res
         self.current_cells = []
+        self.input_schema = input_schema
+        self.output_schema = output_schema
+        self.district_name = district_name
+        
+        # Handle fresh start (schema wiping)
+        if fresh_start:
+            self.con.execute(f"DROP SCHEMA IF EXISTS {self.output_schema} CASCADE")
+        
+        # Setup output schema
+        self.con.execute(f"CREATE SCHEMA IF NOT EXISTS {self.output_schema}")
+        self.con.execute(f"USE {self.output_schema}")
         
         # Setup worker configuration
         if worker_config:
@@ -678,15 +684,64 @@ class ParallelShortcutProcessor:
         """)
 
     def load_shared_data(self, edges_file: str, graph_file: str):
-        """Loads edges and initial shortcuts into the database."""
-        if self.con.execute("SELECT count(*) FROM information_schema.tables WHERE table_name = 'edges'").fetchone()[0] > 0:
-            logger.info("Shared data already loaded, skipping.")
-            return
+        """test
+        Loads edges and initial shortcuts into the database.
+        Preferentially loads from input_schema tables if they exist.
+        """
+        # Check if we have data in the input schema (DuckOSM integration)
+        has_input_tables = False
+        try:
+            # Check for edges and edge_graph in input_schema
+            edges_exist = self.con.execute(
+                f"SELECT count(*) FROM information_schema.tables WHERE table_schema = '{self.input_schema}' AND table_name = 'edges'"
+            ).fetchone()[0] > 0
+            graph_exist = self.con.execute(
+                f"SELECT count(*) FROM information_schema.tables WHERE table_schema = '{self.input_schema}' AND table_name = 'edge_graph'"
+            ).fetchone()[0] > 0
+            has_input_tables = edges_exist and graph_exist
+        except Exception:
+            pass
+
+        if has_input_tables:
+            logger.info(f"Loading shared data from schema '{self.input_schema}'...")
             
-        logger.info("Loading shared data...")
-        utils.read_edges(self.con, edges_file)
-        utils.create_edges_cost_table(self.con, edges_file)
-        utils.initial_shortcuts_table(self.con, graph_file)
+            # Check if already loaded in output schema to avoid redundant copy
+            if self.con.execute(f"SELECT count(*) FROM information_schema.tables WHERE table_schema = '{self.output_schema}' AND table_name = 'edges'").fetchone()[0] > 0:
+                 logger.info("Shared data already loaded (in output schema), skipping.")
+                 return
+            self.con.execute(f"""
+                CREATE OR REPLACE TABLE edges AS 
+                SELECT 
+                    edge_id AS id, 
+                    from_cell, 
+                    to_cell,
+                    lca_res
+                FROM {self.input_schema}.edges
+            """)
+            
+            # Copy Shortcuts (from edge_graph)
+            # DuckOSM edge_graph has: from_edge, to_edge, via_edge, cost
+            # We explicitly select to ensure order/naming
+            self.con.execute(f"""
+                CREATE OR REPLACE TABLE shortcuts AS
+                SELECT 
+                    from_edge,
+                    to_edge,
+                    cost,
+                    via_edge
+                FROM {self.input_schema}.edge_graph
+            """)
+            
+        else:
+            # Fallback to CSV loading
+            if self.con.execute(f"SELECT count(*) FROM information_schema.tables WHERE table_schema = '{self.output_schema}' AND table_name = 'edges'").fetchone()[0] > 0:
+                logger.info("Shared data already loaded (in output schema), skipping.")
+                return
+                
+            logger.info("Loading shared data from CSV files...")
+            utils.read_edges(self.con, edges_file)
+            utils.create_edges_cost_table(self.con, edges_file)
+            utils.initial_shortcuts_table(self.con, graph_file)
         
         # Log initial statistics
         edge_count = self.con.execute("SELECT count(*) FROM edges").fetchone()[0]
@@ -710,10 +765,10 @@ class ParallelShortcutProcessor:
             SELECT 
                 s.from_edge, s.to_edge, s.cost, s.via_edge,
                 GREATEST(e1.lca_res, e2.lca_res) AS lca_res,
-                h3_lca(e1.to_cell::BIGINT, e2.from_cell::BIGINT)::BIGINT AS inner_cell,
-                h3_lca(e1.from_cell::BIGINT, e2.to_cell::BIGINT)::BIGINT AS outer_cell,
-                h3_resolution(h3_lca(e1.to_cell::BIGINT, e2.from_cell::BIGINT))::TINYINT AS inner_res,
-                h3_resolution(h3_lca(e1.from_cell::BIGINT, e2.to_cell::BIGINT))::TINYINT AS outer_res,
+                h3_lca(e1.to_cell, e2.from_cell) AS inner_cell,
+                h3_lca(e1.from_cell, e2.to_cell) AS outer_cell,
+                h3_resolution(h3_lca(e1.to_cell, e2.from_cell))::TINYINT AS inner_res,
+                h3_resolution(h3_lca(e1.from_cell, e2.to_cell))::TINYINT AS outer_res,
                 CAST(NULL AS BIGINT) AS current_cell
             FROM shortcuts s
             LEFT JOIN edges e1 ON s.from_edge = e1.id
@@ -1033,8 +1088,8 @@ class ParallelShortcutProcessor:
         total_forward = self.con.sql(f"SELECT count(*) FROM {self.forward_deactivated_table}").fetchone()[0]
         
         # Stream dedup directly to Parquet (no temp table in memory)
-        # Use district name from db_path for unique checkpoint file
-        district_name = Path(self.db_path).stem  # e.g., "burnaby" from "burnaby.db"
+        # Use provided district name for unique checkpoint file
+        district_name = self.district_name
         parquet_path = str(Path(self.db_path).parent / f"{district_name}_forward_deactivated.parquet")
         self.con.execute(f"""
             COPY (
@@ -1295,8 +1350,8 @@ class ParallelShortcutProcessor:
                 CREATE TABLE {input_table}_tmp AS
                 SELECT from_edge, to_edge, cost, via_edge, lca_res, inner_cell, outer_cell,
                        inner_res, outer_res, 
-                       0::BIGINT AS current_cell_in, 
-                       0::BIGINT AS current_cell_out
+                       0 AS current_cell_in, 
+                       0 AS current_cell_out
                 FROM {input_table}
             """)
         else:
@@ -1307,10 +1362,10 @@ class ParallelShortcutProcessor:
                     from_edge, to_edge, cost, via_edge, lca_res, 
                     inner_cell, outer_cell, inner_res, outer_res,
                     CASE WHEN lca_res <= {res} AND inner_res >= {res} 
-                         THEN h3_parent(inner_cell::BIGINT, {res}) 
+                         THEN h3_parent(inner_cell, {res}) 
                          ELSE NULL END AS current_cell_in,
                     CASE WHEN lca_res <= {res} AND outer_res >= {res} 
-                         THEN h3_parent(outer_cell::BIGINT, {res}) 
+                         THEN h3_parent(outer_cell, {res}) 
                          ELSE NULL END AS current_cell_out
                 FROM {input_table}
             """)
@@ -1342,8 +1397,8 @@ class ParallelShortcutProcessor:
             WITH with_parents AS (
                 SELECT from_edge, to_edge, cost, via_edge, lca_res, 
                     inner_cell, outer_cell, inner_res, outer_res,
-                    h3_parent(inner_cell::BIGINT, {child_res}) AS inner_parent,
-                    h3_parent(outer_cell::BIGINT, {child_res}) AS outer_parent
+                    h3_parent(inner_cell, {child_res}) AS inner_parent,
+                    h3_parent(outer_cell, {child_res}) AS outer_parent
                 FROM {input_table}
             ),
             inner_matches AS (
@@ -1358,7 +1413,7 @@ class ParallelShortcutProcessor:
                 WHERE p.inner_parent IS DISTINCT FROM p.outer_parent
             ),
             no_matches AS (
-                SELECT p.*, NULL::BIGINT AS current_cell
+                SELECT p.*, NULL AS current_cell
                 FROM with_parents p
                 LEFT JOIN _child_cells c1 ON p.inner_parent = c1.cell_id
                 LEFT JOIN _child_cells c2 ON p.outer_parent = c2.cell_id
@@ -1471,7 +1526,7 @@ class ParallelShortcutProcessor:
             method = SP_METHOD
         
         self.con.execute("DROP TABLE IF EXISTS sp_input")
-        self.con.execute(f"CREATE TEMPORARY TABLE sp_input AS SELECT from_edge, to_edge, cost, via_edge, current_cell::BIGINT as current_cell FROM {input_table}")
+        self.con.execute(f"CREATE TEMPORARY TABLE sp_input AS SELECT from_edge, to_edge, cost, via_edge, current_cell as current_cell FROM {input_table}")
         
         if method == "PURE":
             compute_shortest_paths_pure_duckdb(self.con, quiet=quiet, input_table="sp_input")
@@ -1519,8 +1574,8 @@ class ParallelShortcutProcessor:
                 SELECT 
                     s.from_edge, s.to_edge, s.cost, s.via_edge,
                     GREATEST(e1.lca_res, e2.lca_res)::TINYINT as lca_res,
-                    h3_lca(e1.to_cell, e2.from_cell)::BIGINT as inner_cell,
-                    h3_lca(e1.from_cell, e2.to_cell)::BIGINT as outer_cell,
+                    h3_lca(e1.to_cell, e2.from_cell) as inner_cell,
+                    h3_lca(e1.from_cell, e2.to_cell) as outer_cell,
                     h3_resolution(h3_lca(e1.to_cell, e2.from_cell))::TINYINT as inner_res,
                     h3_resolution(h3_lca(e1.from_cell, e2.to_cell))::TINYINT as outer_res
                 FROM shortcuts_next s
@@ -1533,7 +1588,7 @@ class ParallelShortcutProcessor:
             self.con.execute(f"""
                 CREATE OR REPLACE TABLE shortcuts_next AS 
                 SELECT from_edge, to_edge, cost, via_edge, 
-                       0::TINYINT as lca_res, 0::BIGINT as inner_cell, 0::BIGINT as outer_cell, 
+                       0::TINYINT as lca_res, 0 as inner_cell, 0 as outer_cell, 
                        0::TINYINT as inner_res, 0::TINYINT as outer_res
                 FROM {input_table} WHERE 1=0
             """)
@@ -1798,10 +1853,10 @@ class ParallelShortcutProcessor:
                 from_edge, to_edge, cost, via_edge, lca_res, 
                 inner_cell, outer_cell, inner_res, outer_res,
                 CASE WHEN inner_res >= {self.partition_res} 
-                     THEN h3_parent(inner_cell::BIGINT, {self.partition_res}) 
+                     THEN h3_parent(inner_cell, {self.partition_res}) 
                      ELSE NULL END AS current_cell_in,
                 CASE WHEN outer_res >= {self.partition_res} 
-                     THEN h3_parent(outer_cell::BIGINT, {self.partition_res}) 
+                     THEN h3_parent(outer_cell, {self.partition_res}) 
                      ELSE NULL END AS current_cell_out
             FROM cell_0
         """)
@@ -1876,9 +1931,12 @@ class ParallelShortcutProcessor:
         gc.collect()
         return total_backward
 
-    def finalize_and_save(self, output_path: str):
-        """Deduplicates backward pass results and saves output."""
-        log_conf.log_section(logger, "FINALIZING")
+    def consolidate_database(self):
+        """
+        Finalizes the database: deduplicates shortcuts and adds final metadata.
+        Does NOT export to file or close connection.
+        """
+        log_conf.log_section(logger, "CONSOLIDATING DATABASE")
         
         self.con.execute(f"""
             CREATE OR REPLACE TABLE shortcuts_final AS
@@ -1894,9 +1952,66 @@ class ParallelShortcutProcessor:
         self.con.execute("ALTER TABLE shortcuts_final RENAME TO shortcuts")
 
         utils.add_final_info(self.con)
+        
+        # Create self-contained data in output schema for routing engine
+        try:
+            # Drop legacy views from main schema if they exist to avoid confusion
+            self.con.execute("DROP VIEW IF EXISTS main.shortcuts")
+            self.con.execute("DROP VIEW IF EXISTS main.edges")
+
+            # Materialize edges into a table in the output schema
+            if self.input_schema and self.input_schema != self.output_schema:
+                 # Robustly clear existing schema-qualified objects
+                 try: self.con.execute(f"DROP VIEW IF EXISTS {self.output_schema}.edges")
+                 except: pass
+                 try: self.con.execute(f"DROP TABLE IF EXISTS {self.output_schema}.edges")
+                 except: pass
+                 
+                 # Ensure spatial extension is loaded for ST_AsText
+                 self.con.execute("INSTALL spatial; LOAD spatial;")
+                 
+                 query = f"""
+                    CREATE TABLE {self.output_schema}.edges AS 
+                    SELECT 
+                        edge_id AS id, 
+                        from_cell, 
+                        to_cell, 
+                        lca_res, 
+                        length_m AS length, 
+                        cost_s AS cost, 
+                        ST_AsText(geometry) as geometry 
+                    FROM {self.input_schema}.edges
+                 """
+                 self.con.execute(query)
+                 logger.info(f"Materialized self-contained 'edges' table in '{self.output_schema}'")
+            else:
+                 logger.info(f"Skipping edges materialization (input_schema={self.input_schema}, output_schema={self.output_schema})")
+        except Exception as e:
+            logger.warning(f"Failed to create self-contained edges table: {e}")
+
+        self.checkpoint()
+
+    def save_output(self, output_path: str):
+        """Save shortcuts table to parquet."""
         utils.save_output(self.con, output_path)
+
+    def log_database_stats(self):
+        """Log final stats about the database."""
+        try:
+            shorts = self.con.execute("SELECT count(*) FROM shortcuts").fetchone()[0]
+            edges = self.con.execute("SELECT count(*) FROM edges").fetchone()[0]
+            logger.info(f"Database Stats:")
+            logger.info(f"  Shortcuts: {shorts:,}")
+            logger.info(f"  Edges:     {edges:,}")
+        except:
+            pass
+
+    def finalize_and_save(self, output_path: str):
+        """Legacy method: Deduplicates backward pass results and saves output."""
+        self.consolidate_database()
+        self.save_output(output_path)
         self.close()
-        return final_count
+        return 0
 
 
 

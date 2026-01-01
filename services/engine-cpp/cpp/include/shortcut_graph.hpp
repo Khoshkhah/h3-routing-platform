@@ -101,7 +101,7 @@ public:
      * @param db_path Path to DuckDB database file
      * @return true if successful
      */
-    bool load_from_duckdb(const std::string& db_path);
+    bool load_from_duckdb(const std::string& db_path, const std::string& schema = "");
 
     /**
      * @brief Get dataset info value by key.

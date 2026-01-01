@@ -11,15 +11,17 @@ Feature-rich routing engine capable of finding optimal paths in milliseconds usi
 This monorepo contains the entire routing stack:
 
 *   **`services/`**: Long-running applications.
-    *   **[`engine-cpp`](services/engine-cpp/)**: The core C++ Routing Engine (Port 8082).
+    *   **[`engine-cpp`](services/engine-cpp/)**: Core C++ Routing Engine with CSR graph and CH support (Port 8082).
     *   **[`api-gateway`](services/api-gateway/)**: Python FastAPI wrapper + Streamlit UI (Port 8000).
 *   **`tools/`**: Offline data processing.
-    *   **[`osm-importer`](tools/osm-importer/)**: Converts raw `.osm.pbf` files into graph CSVs.
-    *   **[`shortcut-generator`](tools/shortcut-generator/)**: Runs CH algorithm (DuckDB) to produce shortcuts.
+    *   **[`duckOSM`](tools/duckOSM/)**: High-performance OSM to DuckDB road network converter.
+    *   **[`shortcut-generator`](tools/shortcut-generator/)**: H3-partitioned contraction hierarchy shortcut generator.
+    *   **[`h3-toolkit`](tools/h3-toolkit/)**: H3 spatial utilities library (C++/Python).
 *   **`sdk/`**: Client libraries.
     *   **[`python`](sdk/python/)**: `pip install h3-routing-client`
     *   **[`cpp`](sdk/cpp/)**: Header-only C++ client.
 *   **`docs/`**: [Documentation](docs/).
+
 
 ## Getting Started
 

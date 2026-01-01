@@ -1,0 +1,2 @@
+[console_scripts]
+duckosm = duckosm.cli:main

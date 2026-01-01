@@ -1,4 +1,0 @@
-name: "Vancouver_City"
-type: "district"
-pbf_path: "data/maps/vancouver_city.osm.pbf"
-output_dir: "data/output/Vancouver_City"

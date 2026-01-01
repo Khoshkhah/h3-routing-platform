@@ -1503,8 +1503,11 @@ const std::vector<std::pair<double, double>>* ShortcutGraph::get_edge_geometry(u
 
 #ifdef HAVE_DUCKDB
 
-bool ShortcutGraph::load_from_duckdb(const std::string& db_path) {
+bool ShortcutGraph::load_from_duckdb(const std::string& db_path, const std::string& schema) {
     std::cout << "Loading data from DuckDB: " << db_path << std::endl;
+    if (!schema.empty()) {
+        std::cout << "  Using schema: " << schema << std::endl;
+    }
     
     try {
         // Open in read-only mode to avoid lock conflicts with Python processes
@@ -1512,6 +1515,14 @@ bool ShortcutGraph::load_from_duckdb(const std::string& db_path) {
         config.options.access_mode = duckdb::AccessMode::READ_ONLY;
         duckdb::DuckDB db(db_path, &config);
         duckdb::Connection con(db);
+        
+        // Load spatial extension specifically for reading geometry views
+        con.Query("INSTALL spatial");
+        con.Query("LOAD spatial");
+
+        if (!schema.empty()) {
+            con.Query("USE " + schema);
+        }
         
         // Clear existing data
         shortcuts_.clear();

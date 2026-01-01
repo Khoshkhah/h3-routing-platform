@@ -1,0 +1,17 @@
+input:
+  name: "vancouver_city"
+  database_path: "/home/kaveh/projects/h3-routing-platform/data/vancouver_city.duckdb"
+  input_schema: "driving"
+
+algorithm:
+  sp_method: "HYBRID"
+  partition_res: 7
+  hybrid_res: 10
+
+duckdb:
+  memory_limit: "4GB"
+  threads: 10
+  fresh_start: true
+
+parallel:
+  workers: 10

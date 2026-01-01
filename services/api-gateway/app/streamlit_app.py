@@ -45,6 +45,7 @@ API_URL = "http://localhost:8000/route"
 import yaml
 import json
 import os
+import requests
 from pathlib import Path
 
 # Removed @st.cache_data to allow dynamic updates from datasets.yaml
@@ -78,31 +79,52 @@ if paths_config:
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
+def fetch_api_datasets():
+    """Fetch enriched dataset metadata from the API."""
+    try:
+        resp = requests.get("http://localhost:8000/datasets", timeout=2)
+        if resp.ok:
+            return resp.json()
+    except Exception as e:
+        print(f"DEBUG: Could not fetch datasets from API: {e}")
+    return []
+
+api_datasets = fetch_api_datasets()
+api_dataset_map = {ds['name']: ds for ds in api_datasets}
+
 # Convert datasets list to a dict for easier access, and load boundaries
 dataset_map = {}
 for ds in datasets:
-    # Heuristic for center if not provided
+    name = ds['name']
+    api_ds = api_dataset_map.get(name, {})
+    
+    # Heuristic for center if not provided anywhere
     default_center = [37.08, -84.61] # Somerset
-    if "Burnaby" in ds['name'] or "Vancouver" in ds['name']:
+    if "Burnaby" in name or "Vancouver" in name:
         default_center = [49.25, -123.00] 
     
+    # Priority: 1. Local Config, 2. API Enriched, 3. Heuristic
+    center = ds.get('center') or api_ds.get('center') or default_center
+    zoom = ds.get('zoom') or api_ds.get('zoom') or 13
+    boundary = api_ds.get('boundary') # Boundary usually comes from API enrichment (WKT/GeoJSON in DB)
+    
+    short_name = ds.get('short_name') or api_ds.get('short_name') or name
+    description = ds.get('description') or api_ds.get('description') or name
+
     ds_entry = {
-        'name': ds['description'], # Full description for internal use if needed
-        'short_name': ds.get('short_name', ds['name']), # Use short name for display
-        'center': ds.get('center', default_center),
-        'zoom': ds.get('zoom', 13),
-        'boundary': None
+        'name': description,
+        'short_name': short_name,
+        'center': center,
+        'zoom': zoom,
+        'boundary': boundary
     }
     
-    # Load boundary if exists
-    if 'boundary_path' in ds:
+    # Load boundary from local file if specified and not already provided by API
+    if not ds_entry['boundary'] and 'boundary_path' in ds:
         raw_path = ds['boundary_path']
-        # Resolve variables using context
         if resolution_context:
             raw_path = raw_path.format(**resolution_context)
             
-        # Resolve 'data/burnaby/...' relative to project root (one level up from app/)
-        # BUT: The variable {boundary_root} is absolute, so os.path.join handles it correctly (ignores first arg if second is abs)
         boundary_path = raw_path
         if not os.path.isabs(boundary_path):
              boundary_path = os.path.join(os.path.dirname(script_dir), boundary_path)
@@ -111,19 +133,12 @@ for ds in datasets:
             try:
                 with open(boundary_path, 'r') as f:
                     ds_entry['boundary'] = json.load(f)
-                print(f"DEBUG: Loaded boundary for {ds['name']} from {boundary_path}")
+                print(f"DEBUG: Loaded local boundary for {name} from {boundary_path}")
             except Exception as e:
-                msg = f"ERROR: Failed to load boundary {boundary_path}: {e}"
-                print(msg)
-                st.error(msg)
-        else:
-            msg = f"WARNING: Boundary file not found for {ds['name']}: {boundary_path}"
-            print(msg)
-            # st.error(msg)  # Uncommenting to make it visible
-            st.error(msg)
+                print(f"ERROR: Failed to load local boundary {boundary_path}: {e}")
     
     # Use the EXACT name from config as key to match what we send to backend
-    dataset_map[ds['name']] = ds_entry
+    dataset_map[name] = ds_entry
 
 # --- JAVASCRIPT & HTML APPLICATION ---
 # The internal component CSS already forces 100vh/100vw, but is now enforced by the outer container.
@@ -552,7 +567,7 @@ html_code = f"""
                     // Parse values handling both flat (Python) and nested (C++ Engine) formats
                     let routeData = data.route || data; // Use data.route if exists, else top-level
                     
-                    var costSeconds = (routeData.distance || 0) * 3.6;
+                    var costSeconds = routeData.distance || 0;
                     var physicalMeters = routeData.distance_meters || 0;
                     var runtimeMs = routeData.runtime_ms || 0;
 
@@ -596,7 +611,7 @@ html_code = f"""
                     // Append Alternative Route Info if available
                     let altInfo = "";
                     if (data.alternative_route) {{
-                        let altCost = (data.alternative_route.distance || 0) * 3.6;
+                        let altCost = data.alternative_route.distance || 0;
                         let altDist = data.alternative_route.distance_meters || 0;
                         altInfo = `<div style="margin-top: 8px; border-top: 1px dashed #ccc; padding-top: 4px;">
                                      <strong style="color: #ff6600;">Alternative:</strong><br>

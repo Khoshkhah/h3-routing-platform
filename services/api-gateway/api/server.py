@@ -61,6 +61,10 @@ class DatasetInfo(BaseModel):
     binary_path: Optional[str] = None
     bounds: Optional[List[float]] = None
     center: Optional[List[float]] = None
+    zoom: Optional[int] = None
+    boundary: Optional[Dict] = None
+    description: Optional[str] = None
+    short_name: Optional[str] = None
 
 
 class NearestEdgeResponse(BaseModel):
@@ -211,28 +215,26 @@ async def root():
 
 @app.get("/datasets", response_model=List[DatasetInfo])
 async def list_datasets():
-    """List all available datasets."""
+    """List all available datasets with enriched metadata."""
     dataset_names = registry.list_datasets()
     
     result = []
     for name in dataset_names:
-        info = registry.get_dataset_info(name)
-        
-        # Get spatial bounds (lazy load)
-        # Skip spatial index loading to avoid performance hit
-        # bounds = spatial_idx.get_bounds()
-        bounds_list = None
-        if info.get('center'):
-             # Create dummy bounds around center if needed, or just leave None
-             pass
+        # Use enriched metadata (extracts from DB if available)
+        info = registry.get_enriched_metadata(name)
         
         result.append(DatasetInfo(
             name=name,
-            shortcuts_path=info['shortcuts_path'],
-            edges_path=info['edges_path'],
-            binary_path=info['binary_path'],
-            bounds=bounds_list,
-            center=center
+            db_path=info.get('db_path'),
+            shortcuts_path=info.get('shortcuts_path'),
+            edges_path=info.get('edges_path'),
+            binary_path=info.get('binary_path'),
+            bounds=info.get('bounds'),
+            center=info.get('center'),
+            zoom=info.get('zoom'),
+            boundary=info.get('boundary'),
+            description=info.get('description'),
+            short_name=info.get('short_name')
         ))
     
     return result
@@ -498,6 +500,7 @@ async def compute_route_post(request: RouteRequest):
 
 class LoadDatasetRequest(BaseModel):
     dataset: str
+    schema_name: Optional[str] = None  # Optional schema override
 
 @app.post("/load-dataset")
 async def load_dataset_endpoint(request: LoadDatasetRequest):
@@ -507,6 +510,8 @@ async def load_dataset_endpoint(request: LoadDatasetRequest):
         raise HTTPException(status_code=404, detail=f"Dataset not found in registry: {dataset}")
     
     info = registry.get_dataset_info(dataset)
+    # schema preference: request param > dataset config > default "shortcuts"
+    schema = request.schema_name or info.get('schema') or "shortcuts"
     
     # Proxy to C++ server - prefer db_path for DuckDB loading
     try:
@@ -514,7 +519,8 @@ async def load_dataset_endpoint(request: LoadDatasetRequest):
             # DuckDB loading (preferred for legacy engine)
             payload = {
                 "dataset": dataset,
-                "db_path": info['db_path']
+                "db_path": info['db_path'],
+                "schema": schema
             }
         elif info.get('shortcuts_path') and info.get('edges_path'):
             # File loading (fallback)

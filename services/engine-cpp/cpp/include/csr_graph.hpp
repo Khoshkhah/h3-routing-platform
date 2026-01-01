@@ -112,7 +112,7 @@ public:
     bool load_edge_metadata(const std::string& path);
 
 #ifdef HAVE_DUCKDB
-    bool load_from_duckdb(const std::string& db_path);
+    bool load_from_duckdb(const std::string& db_path, const std::string& schema = "");
 #endif
 
     // ========== SPATIAL INDEX ==========

@@ -35,9 +35,12 @@ def run_algorithm(cfg):
     workers = cfg.parallel.workers
     
     print(f"Running algorithm: {algo_name}")
-    print(f"  District: {cfg.input.district}")
+    print(f"  District: {cfg.input.name}")
     print(f"  Edges: {cfg.input.edges_file}")
-    print(f"  Graph: {cfg.input.graph_file}")
+    if cfg.input.database_path:
+        print(f"  Database: {cfg.input.database_path}")
+    else:
+        print(f"  Graph: {cfg.input.graph_file}")
     print(f"  Output: {cfg.output.directory}/{cfg.output.shortcuts_file}")
     print(f"  Workers: {workers} ({'parallel' if workers > 1 else 'single-threaded'})")
     print(f"  SP Method: {cfg.algorithm.sp_method}")
@@ -86,11 +89,11 @@ def run_partitioned_parallel(cfg):
     from processor_parallel import ParallelShortcutProcessor, MAX_WORKERS
     
     logger = logging.getLogger(__name__)
-    log_conf.setup_logging(f"{cfg.input.district}", level=cfg.logging.level, verbose=cfg.logging.verbose)
+    log_conf.setup_logging(f"{cfg.input.name}", level=cfg.logging.level, verbose=cfg.logging.verbose)
     
     # Log config info at start
     log_conf.log_section(logger, "CONFIGURATION")
-    logger.info(f"District: {cfg.input.district}")
+    logger.info(f"District: {cfg.input.name}")
     logger.info(f"Edges: {cfg.input.edges_file}")
     logger.info(f"Graph: {cfg.input.graph_file}")
     logger.info(f"Output: {cfg.output.directory}/{cfg.output.shortcuts_file}")
@@ -99,21 +102,57 @@ def run_partitioned_parallel(cfg):
         logger.info(f"Hybrid Res: {cfg.algorithm.hybrid_res} (PURE for res >= {cfg.algorithm.hybrid_res}, SCIPY for res < {cfg.algorithm.hybrid_res})")
     logger.info(f"Partition Res: {cfg.algorithm.partition_res}")
     logger.info(f"Workers: {cfg.parallel.workers}")
+    logger.info(f"Workers: {cfg.parallel.workers}")
     logger.info(f"DuckDB Memory: {cfg.duckdb.memory_limit}")
     
-    # Setup paths
-    persist_dir = Path(cfg.output.persist_dir)
-    persist_dir.mkdir(parents=True, exist_ok=True)
-    db_path = str(persist_dir / f"{cfg.input.district}.db")
+    # Set environment variables for workers/utilities
+    os.environ["DUCKDB_MEMORY_LIMIT"] = str(cfg.duckdb.memory_limit)
+    if cfg.output.persist_dir:
+        os.environ["DUCKDB_PERSIST_DIR"] = str(cfg.output.persist_dir)
+    
+    # Determine database path
+    # Use helper method from config to resolve path (file vs directory)
+    db_path = cfg.input.get_db_path()
+    
+    if db_path:
+        logger.info(f"Using database: {db_path}")
+        
+        # When using existing DB, fresh_start logic is handled by processor (schema wipe)
+        # We only prevent FILE deletion here.
+        if cfg.duckdb.fresh_start:
+             logger.warning("fresh_start=True with existing DB: Will wipe OUTPUT SCHEMA, but preserve DB file.")
+             
+    else:
+        # Standard behavior: create new DB in persist dir
+        persist_dir = Path(cfg.output.persist_dir)
+        persist_dir.mkdir(parents=True, exist_ok=True)
+        db_path = str(persist_dir / "shortcuts.duckdb")
+
+        # Handle fresh start (delete DB file) - only for generated DBs
+        if cfg.duckdb.fresh_start and os.path.exists(db_path):
+            logger.warning(f"Fresh start: deleting {db_path}")
+            try:
+                os.remove(db_path)
+            except OSError as e:
+                logger.error(f"Error deleting database: {e}")
     
     # Delete existing DB and checkpoint files if fresh_start is enabled
     if cfg.duckdb.fresh_start:
         import glob
+        # The db_path itself is handled above if not using existing DB.
+        # This block handles other associated files like WALs and the parquet checkpoint.
+        
+        # Delete associated DuckDB files (WAL, etc.)
         for f in glob.glob(f"{db_path}*"):
-            Path(f).unlink()
-            logger.info(f"Deleted: {f}")
+            if Path(f) != Path(db_path): # Don't delete the main DB file again if it was already handled
+                Path(f).unlink()
+                logger.info(f"Deleted: {f}")
+        
         # Also delete parquet checkpoint
-        parquet_checkpoint = persist_dir / f"{cfg.input.district}_forward_deactivated.parquet"
+        # Ensure persist_dir is defined if db_path was from cfg.input.database_path
+        if 'persist_dir' not in locals():
+            persist_dir = Path(cfg.output.persist_dir)
+        parquet_checkpoint = persist_dir / f"{cfg.input.name}_forward_deactivated.parquet"
         if parquet_checkpoint.exists():
             parquet_checkpoint.unlink()
             logger.info(f"Deleted: {parquet_checkpoint}")
@@ -149,7 +188,11 @@ def run_partitioned_parallel(cfg):
         sp_method=cfg.algorithm.sp_method,
         hybrid_res=cfg.algorithm.hybrid_res,
         worker_config=worker_config,
-        memory_config=cfg.parallel.memory
+        memory_config=cfg.parallel.memory,
+        input_schema=cfg.input.input_schema,
+        output_schema="shortcuts",
+        fresh_start=cfg.duckdb.fresh_start,
+        district_name=cfg.input.name
     )
     
     # Load shared data
@@ -157,7 +200,7 @@ def run_partitioned_parallel(cfg):
     
     # Check if we can resume from Phase 3
     # Check parquet file first, then table
-    parquet_path = persist_dir / f"{cfg.input.district}_forward_deactivated.parquet"
+    parquet_path = persist_dir / f"{cfg.input.name}_forward_deactivated.parquet"
     try:
         forward_count = processor.con.execute("SELECT count(*) FROM forward_deactivated").fetchone()[0]
     except:
@@ -270,52 +313,18 @@ def run_partitioned_parallel(cfg):
     logger.info(f"Total time: {format_time(time.time() - total_start)}")
     
     # ============================================================
-    # CONSOLIDATE DATABASE: Add full edge data and boundary
+    # CONSOLIDATE DATABASE
     # ============================================================
     log_conf.log_section(logger, "CONSOLIDATING DATABASE")
     
-    # 1. Enhance edges table with geometry, length, cost from CSV
-    edges_csv_path = cfg.input.edges_file
-    logger.info(f"Loading full edge data from: {edges_csv_path}")
+    # Use processor method to consolidate
+    # This handles both CSV-based loading (if fresh) and DB maintenance
+    processor.consolidate_database()
+    processor.log_database_stats()
     
-    processor.con.execute(f"""
-        CREATE OR REPLACE TABLE edges_full AS
-        SELECT 
-            edge_index AS id,
-            from_cell,
-            to_cell,
-            lca_res,
-            length,
-            cost,
-            geometry
-        FROM read_csv_auto('{edges_csv_path}')
-    """)
-    
-    # Replace edges table with full version
-    processor.con.execute("DROP TABLE IF EXISTS edges")
-    processor.con.execute("ALTER TABLE edges_full RENAME TO edges")
-    
-    edge_count = processor.con.execute("SELECT count(*) FROM edges").fetchone()[0]
-    logger.info(f"Enhanced edges table: {edge_count} edges with geometry")
-    
-    # 2. Create dataset_info table with metadata
-    processor.con.execute("""
-        CREATE TABLE IF NOT EXISTS dataset_info (
-            key VARCHAR PRIMARY KEY,
-            value TEXT
-        )
-    """)
-    
-    # Insert dataset name
-    district_name = cfg.input.district
-    processor.con.execute(f"INSERT OR REPLACE INTO dataset_info VALUES ('name', '{district_name}')")
-    processor.con.execute(f"INSERT OR REPLACE INTO dataset_info VALUES ('created_at', CURRENT_TIMESTAMP::VARCHAR)")
-    processor.con.execute(f"INSERT OR REPLACE INTO dataset_info VALUES ('edge_count', '{edge_count}')")
-    processor.con.execute(f"INSERT OR REPLACE INTO dataset_info VALUES ('shortcut_count', '{final_count}')")
-    
-    # 3. Load boundary GeoJSON if provided
-    boundary_path = getattr(cfg.input, 'boundary_file', None)
-    if boundary_path and Path(boundary_path).exists():
+    # Save output if configured (and not using existing DB as sink)
+    if not cfg.input.database_path:
+        processor.save_output(f"{cfg.output.directory}/{cfg.output.shortcuts_file}")
         logger.info(f"Loading boundary from: {boundary_path}")
         with open(boundary_path, 'r') as f:
             boundary_geojson = f.read().replace("'", "''")  # Escape single quotes for SQL
@@ -324,12 +333,21 @@ def run_partitioned_parallel(cfg):
     else:
         logger.info("No boundary file provided, skipping boundary storage")
     
-    # Save output (Parquet for backwards compatibility)
-    output_file = str(output_dir / cfg.output.shortcuts_file)
-    processor.con.execute(f"""
-        COPY shortcuts TO '{output_file}' (FORMAT PARQUET)
-    """)
-    print(f"Saved shortcuts to: {output_file}")
+    # Consolidate and Checkpoint
+    logger.info("CONSOLIDATING DATABASE")
+    logger.info("=" * 60)
+    processor.consolidate_database()
+    
+    # Save output (only if NOT using existing database path, per user request)
+    if not cfg.input.database_path:
+        output_path = str(output_dir / cfg.output.shortcuts_file) + ".parquet"
+        processor.save_output(output_path)
+        logger.info(f"Saved shortcuts to: {output_path}")
+    else:
+        logger.info(f"Shortcuts stored in schema '{cfg.output.output_schema}' of {db_path}")
+
+    # Final stats
+    processor.log_database_stats()
     
     # Cleanup: Drop temporary tables, keep only essential ones
     # Essential: edges, shortcuts, dataset_info, elementary_shortcuts (for debugging)

@@ -20,17 +20,11 @@ CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 
 
 @dataclass
-class InputConfig:
-    edges_file: str = ""
-    graph_file: str = ""
-    district: str = "Burnaby"
-
-
-@dataclass
 class OutputConfig:
     directory: str = "output"
-    shortcuts_file: str = "{district}_shortcuts"
+    shortcuts_file: str = "{name}_shortcuts"
     persist_dir: str = "persist"
+    output_schema: str = "shortcuts"
 
 
 @dataclass
@@ -65,14 +59,24 @@ class InputConfig:
     edges_file: str = ""
     graph_file: str = ""
     boundary_file: Optional[str] = None
-    district: str = "Burnaby"
+    database_path: Optional[str] = None  # Full path to existing DuckDB file
+    input_schema: str = "main"           # Schema to read input from (e.g., driving)
+    name: str = "Somerset"             # District/Region name
 
-
-@dataclass
-class OutputConfig:
-    directory: str = "output"
-    shortcuts_file: str = "{district}_shortcuts"
-    persist_dir: str = "persist"
+    def get_db_path(self) -> str:
+        """
+        Calculate full path to database file.
+        If database_path ends in .duckdb, use it directly.
+        Otherwise treat it as a directory and append name.duckdb.
+        """
+        if not self.database_path:
+            return None
+            
+        db_path = Path(self.database_path)
+        if db_path.suffix == ".duckdb":
+            return str(db_path)
+            
+        return str(db_path / f"{self.name}.duckdb")
 
 
 @dataclass
@@ -111,7 +115,7 @@ class Config:
     parallel: ParallelConfig = field(default_factory=ParallelConfig)
 
     def resolve_paths(self):
-        """Resolve template variables like {district} and {project_root} in paths."""
+        """Resolve template variables like {name} and {project_root} in paths."""
         # 1. Resolve paths config variables first (e.g. project_root)
         # Allow env var override for project_root
         if os.environ.get("H3_ROUTING_ROOT"):
@@ -143,9 +147,11 @@ class Config:
         self.paths.boundaries = resolve(self.paths.boundaries, path_context)
         self.paths.input_data = resolve(self.paths.input_data, path_context)
         
-        # 2. Update context with all resolved paths and district
+        # 2. Update context with all resolved paths and name
+        # Map 'district' to 'name' for backward compatibility in templates
         full_context = {
-            "district": self.input.district,
+            "name": self.input.name,
+            "district": self.input.name,
             **self.paths.__dict__
         }
         
@@ -264,12 +270,12 @@ if __name__ == "__main__":
     # Test loading configs
     print("Loading default config:")
     cfg = load_config("default")
-    print(f"  District: {cfg.input.district}")
+    print(f"  District: {cfg.input.name}")
     print(f"  Algorithm: {cfg.algorithm.name}")
     print(f"  SP Method: {cfg.algorithm.sp_method}")
     
     print("\nLoading burnaby config:")
     cfg = load_config("burnaby")
-    print(f"  District: {cfg.input.district}")
+    print(f"  District: {cfg.input.name}")
     print(f"  Edges file: {cfg.input.edges_file}")
     print(f"  Output dir: {cfg.output.directory}")

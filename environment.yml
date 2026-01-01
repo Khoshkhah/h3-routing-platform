@@ -50,6 +50,9 @@ dependencies:
   - pybind11
   - boost-cpp
   - geojson
+  - click
+  - rich
+  - leafmap
   
   # Jupyter
   - ipykernel

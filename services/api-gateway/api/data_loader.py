@@ -8,11 +8,13 @@ This module handles:
 """
 
 import logging
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List, Any
 
 import pandas as pd
+import duckdb
 from rtree import index
 from shapely import wkt
 from shapely.geometry import LineString, Point
@@ -272,12 +274,69 @@ class DatasetRegistry:
             self.load_dataset(name)
         return self.spatial_indices[name]
     
-    def get_dataset_info(self, name: str) -> Dict[str, str]:
+    def get_dataset_info(self, name: str) -> Dict[str, Any]:
         """Get dataset configuration."""
         if name not in self.datasets:
             raise ValueError(f"Unknown dataset: {name}")
         return self.datasets[name]
-    
+
+    def get_enriched_metadata(self, name: str) -> Dict[str, Any]:
+        """
+        Get enriched metadata for a dataset, extracting from DuckDB if available.
+        """
+        info = self.get_dataset_info(name).copy()
+        db_path = info.get('db_path')
+        
+        if not db_path or not Path(db_path).exists():
+            return info
+
+        try:
+            con = duckdb.connect(db_path, read_only=True)
+            
+            # 1. Try to find visualization_metadata in any schema
+            metadata_query = """
+                SELECT table_schema, table_name 
+                FROM information_schema.tables 
+                WHERE table_name = 'visualization_metadata'
+                LIMIT 1
+            """
+            result = con.execute(metadata_query).fetchone()
+            
+            if result:
+                schema = result[0]
+                table = result[1]
+                data = con.execute(f"SELECT * FROM {schema}.{table}").fetchone()
+                
+                if data:
+                    # columns: boundary_geojson (JSON), center_lat, center_lon, initial_zoom
+                    if not info.get('boundary'):
+                        try:
+                            info['boundary'] = json.loads(data[0]) if isinstance(data[0], str) else data[0]
+                        except: pass
+                    if not info.get('center'):
+                        info['center'] = [data[1], data[2]]
+                    if not info.get('zoom'):
+                        info['zoom'] = data[3]
+                    
+                    logger.info(f"Enriched metadata for {name} from {schema}.{table}")
+            
+            # 2. Fallback: If still missing center/zoom, try to estimate from shortcuts.edges if it exists
+            if not info.get('center'):
+                try:
+                    edges_exist = con.execute("SELECT count(*) FROM information_schema.tables WHERE table_schema='shortcuts' AND table_name='edges'").fetchone()[0] > 0
+                    if edges_exist:
+                        # This is expensive if table is huge, but shortcuts.edges is usually manageable
+                        # We just need a rough center, maybe sample or use bounds if DuckDB 1.1+ (ST_Extent)
+                        # For now, let's keep it simple and just use the first edge as a hint or skip
+                        pass
+                except: pass
+
+            con.close()
+        except Exception as e:
+            logger.warning(f"Failed to enrich metadata for {name} from {db_path}: {e}")
+            
+        return info
+
     def list_datasets(self) -> list:
         """List all registered datasets."""
         return list(self.datasets.keys())

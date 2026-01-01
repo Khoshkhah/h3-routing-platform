@@ -260,8 +260,11 @@ bool CSRGraph::load_edge_metadata(const std::string& path) {
 
 #ifdef HAVE_DUCKDB
 
-bool CSRGraph::load_from_duckdb(const std::string& db_path) {
+bool CSRGraph::load_from_duckdb(const std::string& db_path, const std::string& schema) {
     std::cout << "CSR loading from DuckDB: " << db_path << std::endl;
+    if (!schema.empty()) {
+        std::cout << "  Using schema: " << schema << std::endl;
+    }
     
     try {
         duckdb::DBConfig config;
@@ -270,6 +273,14 @@ bool CSRGraph::load_from_duckdb(const std::string& db_path) {
         config.options.maximum_memory = 512ULL * 1024 * 1024; // 512 MB in bytes
         duckdb::DuckDB db(db_path, &config);
         duckdb::Connection con(db);
+        
+        // Load spatial extension specifically for reading geometry views
+        con.Query("INSTALL spatial");
+        con.Query("LOAD spatial");
+
+        if (!schema.empty()) {
+            con.Query("USE " + schema);
+        }
         
         // Clear existing data
         shortcuts_.clear();

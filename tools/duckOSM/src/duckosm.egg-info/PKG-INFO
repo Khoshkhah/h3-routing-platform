@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: duckosm
+Version: 0.1.0
+Summary: High-performance OSM-to-routing-network converter built on DuckDB
+Author: Kaveh
+Requires-Python: >=3.10
+Requires-Dist: duckdb>=1.0.0
+Requires-Dist: shapely>=2.0.0
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: click>=8.0
+Requires-Dist: h3>=4.0.0
+Dynamic: author
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary

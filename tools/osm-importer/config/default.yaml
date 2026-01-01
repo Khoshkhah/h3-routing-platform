@@ -1,5 +1,0 @@
-name: "Default_Import"
-type: "district"  # Options: "district" or "h3_cell"
-pbf_path: "data/maps/input.osm.pbf"
-output_dir: "data/output/default"
-# h3_cell: "0"  # Required if type is "h3_cell"

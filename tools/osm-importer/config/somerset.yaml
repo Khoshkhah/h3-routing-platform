@@ -1,5 +1,0 @@
-name: "Somerset"
-type: "district"
-pbf_path: "data/maps/Somerset.osm.pbf"
-output_dir: "data/output/Somerset"
-

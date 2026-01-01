@@ -5,18 +5,12 @@ paths:
 
 datasets:
   - name: "somerset"
-    db_path: "{data_root}/Somerset.db"
-    boundary_path: "{boundary_root}/Somerset.geojson"
-    center: [37.07, -84.61]
-    zoom: 13
+    db_path: "{data_root}/somerset.duckdb"
     short_name: "Somerset"
     description: "Somerset, Kentucky, USA"
   
   - name: "burnaby"
-    db_path: "{data_root}/Burnaby.db"
-    boundary_path: "{boundary_root}/burnaby.geojson"
-    center: [49.25, -122.95]
-    zoom: 13
+    db_path: "{data_root}/burnaby.duckdb"
     short_name: "Burnaby"
     description: "Burnaby, British Columbia, Canada"
 

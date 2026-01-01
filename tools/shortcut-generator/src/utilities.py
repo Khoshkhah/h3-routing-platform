@@ -17,23 +17,43 @@ def initialize_duckdb(db_path: str = ":memory:") -> duckdb.DuckDBPyConnection:
     # Tuning for performance/memory
     con.execute("SET preserve_insertion_order=false")
     
+    # Load spatial extension (required for RTREE indexes in DuckOSM DBs)
+    try:
+        con.execute("INSTALL spatial; LOAD spatial;")
+    except Exception:
+        pass
+    
     # Set temp directory for spilling if persistence is enabled
     persist_dir = os.environ.get("DUCKDB_PERSIST_DIR")
     if persist_dir:
         temp_dir = Path(persist_dir) / "temp"
-        temp_dir.mkdir(exist_ok=True)
+        temp_dir.mkdir(parents=True, exist_ok=True)
         con.execute(f"SET temp_directory='{temp_dir}'")
     
     # Register H3 UDFs (may already exist if connecting to persistent DB)
-    try:
-        con.create_function("h3_lca", _find_lca_impl, ["BIGINT", "BIGINT"], "BIGINT")
-        con.create_function("h3_resolution", _find_resolution_impl, ["BIGINT"], "INTEGER")
-        con.create_function("h3_parent", _get_parent_cell_impl, ["BIGINT", "INTEGER"], "BIGINT")
-    except duckdb.CatalogException:
-        # Functions already exist (e.g., in parallel workers connecting to same DB)
-        pass
+    register_h3_udfs(con)
     
     return con
+
+
+def register_h3_udfs(con: duckdb.DuckDBPyConnection) -> None:
+    """Register H3 UDFs for both BIGINT and UBIGINT types."""
+    def register_udf(name, func, args, ret):
+        try:
+            con.create_function(name, func, args, ret)
+        except duckdb.CatalogException:
+            pass # Function already exists
+        except Exception:
+            pass
+            
+    register_udf("h3_lca", _find_lca_impl, ["BIGINT", "BIGINT"], "BIGINT")
+    register_udf("h3_resolution", _find_resolution_impl, ["BIGINT"], "INTEGER")
+    register_udf("h3_parent", _get_parent_cell_impl, ["BIGINT", "INTEGER"], "BIGINT")
+    
+    # Register UBIGINT versions (for DuckOSM compatibility)
+    register_udf("h3_lca", _find_lca_impl, ["UBIGINT", "UBIGINT"], "BIGINT")
+    register_udf("h3_resolution", _find_resolution_impl, ["UBIGINT"], "INTEGER")
+    register_udf("h3_parent", _get_parent_cell_impl, ["UBIGINT", "INTEGER"], "BIGINT")
 
 # ============================================================================
 # H3 IMPLEMENTATIONS (Pure Python)

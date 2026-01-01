@@ -232,16 +232,15 @@ bool load_dataset(const std::string& name, const std::string& shortcuts_path, co
     return true;
 }
 
-// Load dataset from DuckDB
 #ifdef HAVE_DUCKDB
-bool load_dataset_duckdb(const std::string& name, const std::string& db_path) {
-    std::cout << "Loading dataset '" << name << "' from DuckDB...\n";
+bool load_dataset_duckdb(const std::string& name, const std::string& db_path, const std::string& schema = "") {
+    std::cout << "Loading dataset '" << name << "' from DuckDB (schema: " << (schema.empty() ? "default" : schema) << ")...\n";
     std::cout << "  Database: " << db_path << "\n";
     
     auto ds = std::make_shared<Dataset>();
     ds->name = name;
     
-    if (!ds->graph.load_from_duckdb(db_path)) {
+    if (!ds->graph.load_from_duckdb(db_path, schema)) {
         std::cerr << "  Failed to load from DuckDB\n";
         return false;
     }
@@ -413,10 +412,11 @@ int main(int argc, char* argv[]) {
             
             // Check for DuckDB path first
             std::string db_path = body.value("db_path", "");
+            std::string schema = body.value("schema", "");
             
 #ifdef HAVE_DUCKDB
             if (!db_path.empty()) {
-                bool success = load_dataset_duckdb(name, db_path);
+                bool success = load_dataset_duckdb(name, db_path, schema);
                 json response = {
                     {"success", success},
                     {"dataset", name},

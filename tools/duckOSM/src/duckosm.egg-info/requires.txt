@@ -1,0 +1,5 @@
+duckdb>=1.0.0
+shapely>=2.0.0
+pyyaml>=6.0
+click>=8.0
+h3>=4.0.0

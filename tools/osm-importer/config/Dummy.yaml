@@ -1,5 +1,0 @@
-name: "Dummy"
-type: "district"
-pbf_path: "data/maps/Dummy.osm.pbf"
-output_dir: "data/output/Dummy"
-
