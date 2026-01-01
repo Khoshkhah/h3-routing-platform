@@ -128,6 +128,12 @@ with st.sidebar:
         index=0
     )
 
+    st.markdown("---")
+    st.markdown("**Performance**")
+    edge_limit = st.slider("Max Edges", 5000, 500000, 50000, step=5000)
+    st.caption("Lower this if you hit 200MB limit")
+    
+
     if selected_modes:
         st.markdown("---")
         # High contrast legend
@@ -155,8 +161,7 @@ LINE_WIDTH = 4
 mtime = Path(__file__).stat().st_mtime
 
 @st.cache_data(hash_funcs={duckdb.DuckDBPyConnection: id})
-def fetch_network_data(db_path, mode, cache_key=mtime):
-
+def fetch_network_data(db_path, mode, limit, cache_key=mtime):
     # Discover available columns in the table
     try:
         cols_df = con.execute(f"DESCRIBE {mode}.edges").df()
@@ -198,9 +203,12 @@ def fetch_network_data(db_path, mode, cache_key=mtime):
         SELECT 
             {', '.join(select_fields)}
         FROM {mode}.edges
+        ORDER BY length_m DESC
+        LIMIT {limit}
     """
     df = con.execute(query).df()
     if df.empty: return None
+    
     
     
     # Helper for Python-side parallel offset
@@ -273,7 +281,8 @@ def fetch_shortcut_data(db_path, cache_key=mtime):
 
 all_layers = []
 for mode in selected_modes:
-    df = fetch_network_data(selected_db, mode, cache_key=mtime)
+    df = fetch_network_data(selected_db, mode, edge_limit, cache_key=mtime)
+
 
     if df is not None:
         all_layers.append(pdk.Layer(
@@ -312,8 +321,9 @@ if all_layers:
             lat, lon, zoom = meta
         else:
             first_mode = selected_modes[0]
-            first_df = fetch_network_data(selected_db, first_mode, cache_key=mtime)
+            first_df = fetch_network_data(selected_db, first_mode, edge_limit, cache_key=mtime)
             if first_df is not None and not first_df.empty and len(first_df['path']) > 0:
+
                 first_path = list(first_df['path'])[0]
                 lat, lon, zoom = first_path[0][1], first_path[0][0], 13
             else:
