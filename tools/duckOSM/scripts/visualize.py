@@ -70,7 +70,13 @@ st.markdown("""
 with st.sidebar:
     st.markdown("### duckOSM Explorer")
     
-    db_files = list(Path("data/output").glob("*.duckdb"))
+    # Search in multiple locations
+    search_paths = [Path("data/output"), Path("../../data")]
+    db_files = []
+    for p in search_paths:
+        if p.exists():
+            db_files.extend(list(p.glob("*.duckdb")))
+    
     if not db_files:
         st.error("No DuckDB files found.")
         st.stop()
@@ -103,9 +109,17 @@ with st.sidebar:
     
     # Handle non-standard schemas
     for schema in schemas:
-        if schema not in available_modes:
+        if schema not in available_modes and schema != 'shortcuts':
             if st.checkbox(schema.capitalize(), value=False):
                 selected_modes.append(schema)
+    
+    # Shortcut visualization toggle
+    show_shortcuts = False
+    if 'shortcuts' in schemas:
+        st.markdown("---")
+        st.markdown("**Hierarchy**")
+        show_shortcuts = st.checkbox("Show Shortcuts", value=False)
+    
     
     # Simple selection for Map Styles
     basemap_name = st.selectbox(
@@ -133,13 +147,13 @@ style_urls = {
 chosen_style = style_urls[basemap_name]
 
 # Hardcoded constants
-LINE_WIDTH = 6
-EDGE_LIMIT = 20000
+LINE_WIDTH = 4
+# Removed EDGE_LIMIT as requested
+
 
 # --- DATA LOADING ---
 @st.cache_data
 def fetch_network_data(db_path, mode):
-    # Fetch data without ST_OffsetCurve to avoid version issues
     query = f"""
         SELECT 
             osm_id, name, highway, is_reverse,
@@ -147,7 +161,6 @@ def fetch_network_data(db_path, mode):
             round(maxspeed_kmh, 1) as speed_kmh,
             ST_AsText(geometry) as wkt_geom
         FROM {mode}.edges
-        LIMIT {EDGE_LIMIT}
     """
     df = con.execute(query).df()
     if df.empty: return None
@@ -178,6 +191,34 @@ def fetch_network_data(db_path, mode):
     df['color'] = [mode_colors.get(mode.lower(), [201, 209, 217, 180])] * len(df)
     return df
 
+@st.cache_data
+def fetch_shortcut_data(db_path):
+    # Fetch shortcuts and their corresponding edge geometries
+    # Note: This is an expensive join for large datasets
+    query = """
+        SELECT 
+            s.from_edge, s.to_edge, s.cost,
+            round(e.length, 1) as length_m,
+            ST_AsText(e.geometry) as wkt_geom
+        FROM shortcuts.shortcuts s
+        JOIN shortcuts.edges e ON s.from_edge = e.id
+        LIMIT 50000 -- Limit shortcuts slightly for performance
+    """
+    df = con.execute(query).df()
+    if df.empty: return None
+    
+    def parse_wkt(wkt_str):
+        try:
+            line = wkt.loads(wkt_str)
+            return list(line.coords)
+        except:
+            return []
+            
+    df['path'] = df['wkt_geom'].apply(parse_wkt)
+    df['color'] = [[255, 0, 255, 120]] * len(df) # Magenta for shortcuts
+    return df
+
+
 all_layers = []
 for mode in selected_modes:
     df = fetch_network_data(selected_db, mode)
@@ -193,17 +234,43 @@ for mode in selected_modes:
             auto_highlight=True
         ))
 
+if show_shortcuts:
+    sdf = fetch_shortcut_data(selected_db)
+    if sdf is not None:
+        all_layers.append(pdk.Layer(
+            "PathLayer",
+            sdf,
+            pickable=True,
+            get_path="path",
+            get_color="color",
+            get_width=2,
+            width_min_pixels=1,
+            auto_highlight=True
+        ))
+
+
 # --- RENDERING ---
 if all_layers:
-    # Centering on data
-    first_mode = selected_modes[0]
-    first_df = fetch_network_data(selected_db, first_mode)
-    first_path = list(first_df['path'])[0]
+    # Centering on data using main.visualization if available
+    try:
+        meta = con.execute("SELECT center_lat, center_lon, initial_zoom FROM main.visualization").fetchone()
+        if meta:
+            lat, lon, zoom = meta
+        else:
+            first_mode = selected_modes[0]
+            first_df = fetch_network_data(selected_db, first_mode)
+            first_path = list(first_df['path'])[0]
+            lat, lon, zoom = first_path[0][1], first_path[0][0], 13
+    except:
+        first_mode = selected_modes[0]
+        first_df = fetch_network_data(selected_db, first_mode)
+        first_path = list(first_df['path'])[0]
+        lat, lon, zoom = first_path[0][1], first_path[0][0], 13
     
     view_state = pdk.ViewState(
-        longitude=first_path[0][0],
-        latitude=first_path[0][1],
-        zoom=13,
+        longitude=lon,
+        latitude=lat,
+        zoom=zoom,
         pitch=0
     )
 
