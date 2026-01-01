@@ -131,7 +131,9 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("**Performance**")
     edge_limit = st.slider("Max Edges", 5000, 500000, 50000, step=5000)
-    st.caption("Lower this if you hit 200MB limit")
+    use_offset = st.checkbox("Parallel Offset (Slow)", value=False)
+    st.caption("Lower limit or disable offset if too slow")
+    
     
 
     if selected_modes:
@@ -161,7 +163,7 @@ LINE_WIDTH = 4
 mtime = Path(__file__).stat().st_mtime
 
 @st.cache_data(hash_funcs={duckdb.DuckDBPyConnection: id})
-def fetch_network_data(db_path, mode, limit, cache_key=mtime):
+def fetch_network_data(db_path, mode, limit, offset_enabled, cache_key=mtime):
     # Discover available columns in the table
     try:
         cols_df = con.execute(f"DESCRIBE {mode}.edges").df()
@@ -171,12 +173,11 @@ def fetch_network_data(db_path, mode, limit, cache_key=mtime):
         return None
 
     # Define desired columns and their fallbacks
-    # (Select only what exists to avoid Binder errors)
     select_fields = []
     
-    # Priority columns for visualization
-    if 'geometry' in available_cols: select_fields.append("ST_AsText(geometry) as wkt_geom")
-    else: return None # Can't visualize without geometry
+    # Priority columns for visualization - Use WKB for speed
+    if 'geometry' in available_cols: select_fields.append("ST_AsWKB(geometry) as wkb_geom")
+    else: return None
     
     if 'osm_id' in available_cols: select_fields.append("osm_id")
     elif 'id' in available_cols: select_fields.append("id as osm_id")
@@ -208,6 +209,22 @@ def fetch_network_data(db_path, mode, limit, cache_key=mtime):
     """
     df = con.execute(query).df()
     if df.empty: return None
+    
+    # Fast WKB parsing using shapely.from_wkb
+    import shapely
+    
+    def parse_path(row):
+        try:
+            line = shapely.from_wkb(row['wkb_geom'])
+            if offset_enabled and row['is_reverse']:
+                line = line.parallel_offset(0.00003, 'right', join_style=2)
+            return list(line.coords)
+        except:
+            return []
+            
+    df['path'] = df.apply(parse_path, axis=1)
+    df.drop(columns=['wkb_geom'], inplace=True)
+    
     
     
     
@@ -249,7 +266,7 @@ def fetch_shortcut_data(db_path, cache_key=mtime):
     # Fetch shortcuts and their corresponding edge geometries
     select_fields = ["s.from_edge", "s.to_edge", "s.cost"]
     
-    if 'geometry' in available_cols: select_fields.append("ST_AsText(e.geometry) as wkt_geom")
+    if 'geometry' in available_cols: select_fields.append("ST_AsWKB(e.geometry) as wkb_geom")
     else: return None
     
     if 'length' in available_cols: select_fields.append("round(e.length, 1) as length_m")
@@ -266,22 +283,25 @@ def fetch_shortcut_data(db_path, cache_key=mtime):
     df = con.execute(query).df()
     if df.empty: return None
 
-    
-    def parse_wkt(wkt_str):
+    import shapely
+    def parse_path(wkb):
         try:
-            line = wkt.loads(wkt_str)
+            line = shapely.from_wkb(wkb)
             return list(line.coords)
         except:
             return []
             
-    df['path'] = df['wkt_geom'].apply(parse_wkt)
+    df['path'] = df['wkb_geom'].apply(parse_path)
+    df.drop(columns=['wkb_geom'], inplace=True)
     df['color'] = [[255, 0, 255, 120]] * len(df) # Magenta for shortcuts
     return df
 
 
+
 all_layers = []
 for mode in selected_modes:
-    df = fetch_network_data(selected_db, mode, edge_limit, cache_key=mtime)
+    df = fetch_network_data(selected_db, mode, edge_limit, use_offset, cache_key=mtime)
+
 
 
     if df is not None:
@@ -321,8 +341,9 @@ if all_layers:
             lat, lon, zoom = meta
         else:
             first_mode = selected_modes[0]
-            first_df = fetch_network_data(selected_db, first_mode, edge_limit, cache_key=mtime)
+            first_df = fetch_network_data(selected_db, first_mode, edge_limit, use_offset, cache_key=mtime)
             if first_df is not None and not first_df.empty and len(first_df['path']) > 0:
+
 
                 first_path = list(first_df['path'])[0]
                 lat, lon, zoom = first_path[0][1], first_path[0][0], 13
