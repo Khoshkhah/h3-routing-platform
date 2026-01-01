@@ -11,18 +11,16 @@ The core preprocessing tool that builds Contraction Hierarchies from road networ
 
 ## ⚡ Overview
 
-This tool takes a road network (edges and graph connectivity) and produces a **Shortcut Database (`.db`)**. A hierarchical algorithm partitions the graph using H3 cells, computing shortcuts within and between cells to speed up routing queries.
+This tool takes a road network from duckOSM and produces hierarchical **shortcuts** stored in the same DuckDB database. A 4-phase algorithm partitions the graph using H3 cells, computing shortcuts within and between cells to speed up routing queries.
 
 ## 🚀 Key Features
 
-- **H3 Partitioning**: Uses H3 cells (resolutions 7-15) to parallelize shortest path computations.
-- **DuckDB Storage**: Inputs and outputs are managed efficiently using DuckDB.
-- **Robustness**: Handles turn restrictions and complex graph topology.
-- **Variable Configuration**: Supports flexible path configurations.
+- **DuckDB Integration**: Reads directly from duckOSM output (input_schema)
+- **H3 Partitioning**: Uses H3 cells (resolutions 0-15) for parallelization
+- **Parallel Processing**: Multi-core shortcut generation in Phase 1 and 4
+- **Memory Efficient**: Streams results to avoid OOM on large datasets
 
 ## 📦 Usage
-
-The tool is configured via YAML files in the `config/` directory.
 
 ### Quick Start
 
@@ -30,23 +28,40 @@ The tool is configured via YAML files in the `config/` directory.
 # Activate environment
 conda activate h3-routing
 
-# Run for a dataset (e.g., Burnaby)
-python tools/shortcut-generator/main.py --config config/burnaby.yaml
+# Run for a DuckDB dataset
+python tools/shortcut-generator/main.py --config config/metro_vancouver_duckdb.yaml
 ```
 
-This will produce: `data/Burnaby.db`
+### Configuration (DuckDB mode)
 
-### Configuration
+```yaml
+# config/metro_vancouver_duckdb.yaml
+input:
+  name: "metro_vancouver"
+  database_path: "/path/to/metro_vancouver.duckdb"
+  input_schema: "driving"
 
-Configs inherit from `config/default.yaml`. To add a new dataset:
+algorithm:
+  sp_method: "HYBRID"
+  partition_res: 7
+  hybrid_res: 10
 
-1. Create `config/new_city.yaml`
-2. Specify the district name and any overrides.
+parallel:
+  workers: 10
+```
 
 ## 📊 Output Schema
 
-The resulting `.db` file contains:
+Shortcuts are added to the `shortcuts` schema in the same DuckDB database:
 
-- **edges**: Road segments with geometry, length, and attributes.
-- **shortcuts**: Pre-calculated shortcut edges for fast routing.
-- **dataset_info**: Metadata including the boundary GeoJSON.
+- **shortcuts**: Pre-calculated shortcut edges with `from_edge`, `to_edge`, `cost`, `via_edge`, `cell`, `inside`
+- **edges**: Copy of input edges with routing-specific columns
+- **elementary_shortcuts**: Initial shortcuts before hierarchical merging
+- **dataset_info**: Metadata including boundary GeoJSON
+
+## 🔄 Workflow
+
+1. **Phase 1**: Forward pass - partition at fine resolution, parallel shortest paths
+2. **Phase 2**: Hierarchical consolidation - merge up to coarse resolution
+3. **Phase 3**: Backward pass - assign cells to shortcuts
+4. **Phase 4**: Parallel finalization per H3 cell

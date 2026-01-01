@@ -11,8 +11,8 @@ This project is a high-performance **H3 Spatial Hierarchy** routing engine desig
 ```mermaid
 graph LR
     subgraph "1. Offline Data Generation"
-        OSM[OpenStreetMap Data] -->|osm-to-road| Graph["Road Graph (Edges/Nodes)"]
-        Graph -->|road-to-shortcut-duckdb| Shortcuts["Shortcuts (Parquet)"]
+        OSM[OpenStreetMap Data] -->|duckOSM| DuckDB[("DuckDB Database")]
+        DuckDB -->|shortcut-generator| Shortcuts["Shortcuts Schema"]
         Graph -->|road-to-shortcut-duckdb| Meta["Edge Metadata (CSV)"]
     end
 
@@ -51,10 +51,10 @@ graph LR
 
 ### 1. Offline Data Generation
 Before the server starts, we process raw map data into a format optimized for routing.
-*   **osm-to-road**: Converts OpenStreetMap XML/PBF into a clean road graph (edges and nodes).
-*   **road-to-shortcut-duckdb**: The "Brain". Uses DuckDB (and previously Spark) to pre-calculate **shortcuts**.
+*   **duckOSM**: Converts OpenStreetMap PBF into a DuckDB database with road graph (edges, nodes, edge_graph).
+*   **shortcut-generator**: The "Brain". Uses DuckDB to pre-calculate **shortcuts**.
     *   Uses **H3 Spatial Hierarchy** to add "shortcut edges" that skip over geographic regions.
-    *   Output: `shortcuts.parquet` (compressed graph) and `edges.csv` (metadata).
+    *   Output: `shortcuts` schema in the DuckDB database.
 
 ### 2. C++ Routing Backend
 The heavy lifter. A high-performance C++ server.

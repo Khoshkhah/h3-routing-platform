@@ -10,5 +10,5 @@ has_children: true
 The H3 Routing Platform includes several specialized tools for data processing, spatial indexing, and performance optimization.
 
 - **[H3 Toolkit](tools/h3-toolkit.md)**: High-performance H3 geometric operations and polygon tracing (C++/Python).
-- **[OSM Importer](tools/osm-importer.md)**: Converts OSM PBF data into graph-ready formats.
+- **[duckOSM](tools/duckosm.md)**: High-performance OSM to DuckDB road network converter.
 - **[Shortcut Generator](tools/shortcut-generator.md)**: Pre-computes hierarchical shortcuts for the routing engine using DuckDB.
