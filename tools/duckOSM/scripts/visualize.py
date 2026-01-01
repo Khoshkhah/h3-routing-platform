@@ -201,8 +201,21 @@ def fetch_network_data(db_path, mode, limit, offset_enabled, cache_key=mtime):
     df['path'] = df.apply(parse_path, axis=1)
     
     mode_colors = {'driving': [255, 159, 67, 180], 'walking': [84, 160, 255, 180], 'cycling': [29, 209, 161, 180]}
+    mode_colors = {'driving': [255, 159, 67, 180], 'walking': [84, 160, 255, 180], 'cycling': [29, 209, 161, 180]}
     df['color'] = [mode_colors.get(mode.lower(), [201, 209, 217, 180])] * len(df)
+    
+    # Force native Python types to avoid pydeck serialization errors with numpy scalars
+    for col in ['osm_id', 'id']:
+        if col in df.columns:
+            df[col] = df[col].astype(object) # Keep as object to hold python ints if needed, or just map
+            df[col] = df[col].apply(lambda x: int(x) if pd.notnull(x) else 0)
+            
+    for col in ['length_m', 'speed_kmh', 'cost']:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: float(x) if pd.notnull(x) else 0.0)
+
     return df
+
 
 @st.cache_data(hash_funcs={duckdb.DuckDBPyConnection: id})
 def fetch_shortcut_data(db_path, cache_key=mtime):
@@ -240,7 +253,14 @@ def fetch_shortcut_data(db_path, cache_key=mtime):
             
     df['path'] = df['wkb_geom'].apply(parse_path)
     df['color'] = [[255, 0, 255, 120]] * len(df)
+    
+    # Force native Python types
+    for col in ['cost', 'length_m']:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: float(x) if pd.notnull(x) else 0.0)
+            
     return df
+
 
 # --- RENDERING ---
 all_layers = []
@@ -271,7 +291,7 @@ if all_layers:
     
     st.pydeck_chart(pdk.Deck(
         map_style=chosen_style,
-        initial_view_state=pdk.ViewState(longitude=lon, latitude=lat, zoom=zoom, pitch=0),
+        initial_view_state=pdk.ViewState(longitude=float(lon), latitude=float(lat), zoom=int(zoom), pitch=0),
         layers=all_layers,
         height=1000, 
         tooltip={
@@ -279,5 +299,6 @@ if all_layers:
             "style": {"backgroundColor": "#161b22", "color": "#c9d1d9"}
         }
     ), key=f"deck-{basemap_name}-{'-'.join(selected_modes)}")
+
 else:
     st.info(" Select networks in the sidebar to visualize.")
