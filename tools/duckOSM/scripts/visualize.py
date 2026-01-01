@@ -176,9 +176,10 @@ def fetch_network_data(db_path, mode, limit, offset_enabled, cache_key=mtime):
     select_fields = []
     
     # Priority columns for visualization - Use WKB for speed
-    geom_type = cols_df[cols_df['column_name'] == 'geometry']['data_type'].iloc[0] if 'geometry' in available_cols else None
+    geom_type = cols_df[cols_df['column_name'] == 'geometry']['column_type'].iloc[0] if 'geometry' in available_cols else None
     
     if geom_type == 'GEOMETRY':
+
         select_fields.append("ST_AsWKB(geometry) as wkb_geom")
     elif geom_type == 'VARCHAR':
         select_fields.append("ST_AsWKB(ST_GeomFromText(geometry)) as wkb_geom")
@@ -280,9 +281,10 @@ def fetch_shortcut_data(db_path, cache_key=mtime):
     # Fetch shortcuts and their corresponding edge geometries
     select_fields = ["s.from_edge", "s.to_edge", "s.cost"]
     
-    geom_type = cols_df[cols_df['column_name'] == 'geometry']['data_type'].iloc[0] if 'geometry' in available_cols else None
+    geom_type = cols_df[cols_df['column_name'] == 'geometry']['column_type'].iloc[0] if 'geometry' in available_cols else None
     
     if geom_type == 'GEOMETRY':
+
         select_fields.append("ST_AsWKB(e.geometry) as wkb_geom")
     elif geom_type == 'VARCHAR':
          # Use ST_GeomFromText for WKT columns
