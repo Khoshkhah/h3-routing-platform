@@ -1,3 +1,10 @@
+---
+layout: default
+title: duckOSM
+parent: Tools
+nav_order: 2
+---
+
 # duckOSM
 
 **High-performance OSM to DuckDB road network converter.**
