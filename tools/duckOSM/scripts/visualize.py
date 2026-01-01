@@ -138,6 +138,20 @@ style_urls = {
 chosen_style = style_urls[basemap_name]
 LINE_WIDTH = 4
 
+# --- HELPER: DATA SANITIZATION ---
+def sanitize_df(df):
+    """Convert all numpy types to native Python types for JSON serialization."""
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            continue
+        if pd.api.types.is_integer_dtype(df[col]):
+            df[col] = df[col].astype(object).apply(lambda x: int(x) if pd.notnull(x) else None)
+        elif pd.api.types.is_float_dtype(df[col]):
+            df[col] = df[col].astype(object).apply(lambda x: float(x) if pd.notnull(x) else None)
+        elif pd.api.types.is_bool_dtype(df[col]):
+            df[col] = df[col].astype(object).apply(lambda x: bool(x) if pd.notnull(x) else None)
+    return df
+
 # --- DATA LOADING ---
 mtime = Path(__file__).stat().st_mtime
 
@@ -201,21 +215,9 @@ def fetch_network_data(db_path, mode, limit, offset_enabled, cache_key=mtime):
     df['path'] = df.apply(parse_path, axis=1)
     
     mode_colors = {'driving': [255, 159, 67, 180], 'walking': [84, 160, 255, 180], 'cycling': [29, 209, 161, 180]}
-    mode_colors = {'driving': [255, 159, 67, 180], 'walking': [84, 160, 255, 180], 'cycling': [29, 209, 161, 180]}
     df['color'] = [mode_colors.get(mode.lower(), [201, 209, 217, 180])] * len(df)
     
-    # Force native Python types to avoid pydeck serialization errors with numpy scalars
-    for col in ['osm_id', 'id']:
-        if col in df.columns:
-            df[col] = df[col].astype(object) # Keep as object to hold python ints if needed, or just map
-            df[col] = df[col].apply(lambda x: int(x) if pd.notnull(x) else 0)
-            
-    for col in ['length_m', 'speed_kmh', 'cost']:
-        if col in df.columns:
-            df[col] = df[col].apply(lambda x: float(x) if pd.notnull(x) else 0.0)
-
-    return df
-
+    return sanitize_df(df)
 
 @st.cache_data(hash_funcs={duckdb.DuckDBPyConnection: id})
 def fetch_shortcut_data(db_path, cache_key=mtime):
@@ -254,12 +256,8 @@ def fetch_shortcut_data(db_path, cache_key=mtime):
     df['path'] = df['wkb_geom'].apply(parse_path)
     df['color'] = [[255, 0, 255, 120]] * len(df)
     
-    # Force native Python types
-    for col in ['cost', 'length_m']:
-        if col in df.columns:
-            df[col] = df[col].apply(lambda x: float(x) if pd.notnull(x) else 0.0)
-            
-    return df
+    return sanitize_df(df)
+
 
 
 # --- RENDERING ---
