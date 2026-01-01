@@ -213,17 +213,24 @@ def fetch_network_data(db_path, mode, limit, offset_enabled, cache_key=mtime):
     # Fast WKB parsing using shapely.from_wkb
     import shapely
     
+    # Pre-convert to bytes to avoid 'got int' errors with bytearray in shapely
     def parse_path(row):
         try:
-            line = shapely.from_wkb(row['wkb_geom'])
+            # Explicitly convert bytearray to bytes
+            wkb_data = bytes(row['wkb_geom'])
+            line = shapely.from_wkb(wkb_data)
             if offset_enabled and row['is_reverse']:
                 line = line.parallel_offset(0.00003, 'right', join_style=2)
             return list(line.coords)
-        except:
+        except Exception as e:
             return []
             
     df['path'] = df.apply(parse_path, axis=1)
     df.drop(columns=['wkb_geom'], inplace=True)
+    
+    # Terminal logging for debug
+    print(f"Loaded {len(df)} edges for {mode}")
+    
     
     
     
@@ -286,13 +293,19 @@ def fetch_shortcut_data(db_path, cache_key=mtime):
     import shapely
     def parse_path(wkb):
         try:
-            line = shapely.from_wkb(wkb)
+            # Explicitly convert bytearray to bytes
+            wkb_data = bytes(wkb)
+            line = shapely.from_wkb(wkb_data)
             return list(line.coords)
-        except:
+        except Exception as e:
             return []
             
     df['path'] = df['wkb_geom'].apply(parse_path)
     df.drop(columns=['wkb_geom'], inplace=True)
+    
+    # Terminal logging for debug
+    print(f"Loaded {len(df)} shortcuts")
+    
     df['color'] = [[255, 0, 255, 120]] * len(df) # Magenta for shortcuts
     return df
 
