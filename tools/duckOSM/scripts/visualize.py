@@ -139,17 +139,31 @@ chosen_style = style_urls[basemap_name]
 LINE_WIDTH = 4
 
 # --- HELPER: DATA SANITIZATION ---
+# --- HELPER: DATA SANITIZATION ---
 def sanitize_df(df):
-    """Convert all numpy types to native Python types for JSON serialization."""
+    """Aggressively convert known problematic columns to native Python types."""
+    # Force specific columns to native types regardless of current dtype
+    # This catches 'object' columns that might hold numpy scalars
+    
+    # 1. Integers (IDs)
+    for col in ['osm_id', 'id', 'from_edge', 'to_edge']:
+        if col in df.columns:
+            # Drop to object first to handle potential NaNs safely, then map
+            df[col] = df[col].astype(object).apply(lambda x: int(x) if pd.notnull(x) else 0)
+            
+    # 2. Floats (Metrics)
+    for col in ['length_m', 'speed_kmh', 'cost', 'maxspeed_kmh', 'length']:
+        if col in df.columns:
+            df[col] = df[col].astype(object).apply(lambda x: float(x) if pd.notnull(x) else 0.0)
+            
+    # 3. Last resort: scan remaining columns for numpy types (excluding lists/vectors like path/color)
     for col in df.columns:
-        if df[col].dtype == 'object':
-            continue
+        if col in ['path', 'color', 'wkb_geom']: continue
         if pd.api.types.is_integer_dtype(df[col]):
-            df[col] = df[col].astype(object).apply(lambda x: int(x) if pd.notnull(x) else None)
+             df[col] = df[col].astype(object).apply(lambda x: int(x) if pd.notnull(x) else None)
         elif pd.api.types.is_float_dtype(df[col]):
-            df[col] = df[col].astype(object).apply(lambda x: float(x) if pd.notnull(x) else None)
-        elif pd.api.types.is_bool_dtype(df[col]):
-            df[col] = df[col].astype(object).apply(lambda x: bool(x) if pd.notnull(x) else None)
+             df[col] = df[col].astype(object).apply(lambda x: float(x) if pd.notnull(x) else None)
+             
     return df
 
 # --- DATA LOADING ---
