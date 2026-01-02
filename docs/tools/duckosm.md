@@ -96,6 +96,6 @@ input:
 
 ## Documentation
 
-- [Architecture](../../../tools/duckOSM/docs/architecture.md)
-- [Data Dictionary](../../../tools/duckOSM/docs/data_dictionary.md)
-- [Query Cookbook](../../../tools/duckOSM/docs/query_cookbook.md)
+- [Architecture](https://github.com/Khoshkhah/h3-routing-platform/blob/main/tools/duckOSM/docs/architecture.md)
+- [Data Dictionary](https://github.com/Khoshkhah/h3-routing-platform/blob/main/tools/duckOSM/docs/data_dictionary.md)
+- [Query Cookbook](https://github.com/Khoshkhah/h3-routing-platform/blob/main/tools/duckOSM/docs/query_cookbook.md)
