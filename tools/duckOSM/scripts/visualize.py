@@ -333,7 +333,6 @@ status.empty()
 
 # --- RENDERING ---
 if all_layers:
-if all_layers:
     # Centering logic
     lat, lon, zoom = None, None, None
     

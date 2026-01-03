@@ -16,12 +16,10 @@ datasets:
 
   - name: "vancouver_city"
     db_path: "{data_root}/vancouver_city.duckdb"
-    boundary_path: "{boundary_root}/vancouver_city.geojson"
     short_name: "Vancouver City"
     description: "City of Vancouver, British Columbia, Canada"
 
   - name: "metro_vancouver"
     db_path: "{data_root}/metro_vancouver.duckdb"
-    boundary_path: "{boundary_root}/metro_vancouver.geojson"
     short_name: "Metro Vancouver"
     description: "Metro Vancouver Regional District, British Columbia, Canada"

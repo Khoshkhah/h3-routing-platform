@@ -671,16 +671,6 @@ html_code = f"""
             const newDataset = this.value;
             const config = datasetConfig[newDataset];
             
-            // Clear all route layers first
-            if (routeLayer) {{
-                map.removeLayer(routeLayer);
-                routeLayer = null;
-            }}
-            if (alternativeRouteLayer) {{
-                map.removeLayer(alternativeRouteLayer);
-                alternativeRouteLayer = null;
-            }}
-            
             // Update map center and zoom
             map.setView(config.center, config.zoom);
             
@@ -691,14 +681,11 @@ html_code = f"""
             // Update Loading Status UI
             checkServerStatus();
             
-            // Reset display
-            document.getElementById('disp-time').innerText = "---";
-            document.getElementById('disp-dist').innerText = "---";
-            
             // Recalculate route with new dataset only if loaded
             if (currentLoadedDatasets.includes(newDataset)) {{
                 onDrag();
             }} else {{
+                if (routeLayer) map.removeLayer(routeLayer);
                 document.getElementById('disp-time').innerText = "Not Loaded";
                 document.getElementById('disp-dist').innerText = "Load first";
             }}
