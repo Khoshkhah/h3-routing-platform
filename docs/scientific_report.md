@@ -35,7 +35,7 @@ The preprocessing phase is a bidirectional **Bottom-Up-Top-Down** process, desig
 
 ## 5. Comparative Analysis
 
-| Feature | **Your H3-Algorithm** | **BBQ Algorithm** [1] | **CH (CCH)** [6] | **TEDI** [4] |
+| Feature | **H3-Hierarchical Tree Decomposition** | **BBQ Algorithm** [1] | **CH (CCH)** [6] | **TEDI** [4] |
 | :--- | :--- | :--- | :--- | :--- |
 | **Hierarchy Basis** | **Static Geographic (H3)** | Topological Reduction | Node Importance | Graph Separators |
 | **Graph Type** | **Edge-Based (Line Graph)** | Node-Based | Node-Based | Node-Based |
