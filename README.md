@@ -4,7 +4,7 @@
 
 Feature-rich routing engine capable of finding optimal paths in milliseconds using a specialized C++ backend and H3 spatial pruning.
 
-[Architecture Overview](docs/architecture_overview.md) | [📊 Interactive Diagrams](https://khoshkhah.github.io/h3-routing-platform/diagrams/)
+[Architecture Overview](docs/architecture_overview.md) | [Interactive Diagrams](https://khoshkhah.github.io/h3-routing-platform/diagrams/)
 
 ## Project Structure
 

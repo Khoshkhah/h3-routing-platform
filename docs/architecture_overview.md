@@ -6,7 +6,7 @@ nav_order: 2
 
 # Architecture Overview
 
-> **📊 Interactive Diagrams**: [View the full architecture interactively](interactive_diagrams) (LikeC4)
+> **Interactive Diagrams**: [View the full architecture interactively](interactive_diagrams) (LikeC4)
 
 This project is a high-performance **H3 Spatial Hierarchy** routing engine designed for efficient pathfinding on large road networks. It consists of three main layers: Data Generation, Routing Engine (C++), and Application Layer (Python/UI).
 
