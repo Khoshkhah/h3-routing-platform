@@ -24,10 +24,10 @@ Explore the H3 Routing Platform architecture interactively using the LikeC4 diag
 | duckOSM Pipeline | 9 processor components |
 | Routing Sequence | Dynamic request/response flow |
 
-<div style="background: #0d1117; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; margin-top: 1rem; padding: 2px;">
+<div style="border: 1px solid #d0d7de; border-radius: 6px; overflow: hidden; margin-top: 1rem;">
   <iframe 
     src="diagrams/" 
-    style="width: 100%; height: 750px; border: none; border-radius: 4px;"
+    style="width: 100%; height: 750px; border: none; background: white;"
     title="LikeC4 Architecture Diagrams">
   </iframe>
 </div>
