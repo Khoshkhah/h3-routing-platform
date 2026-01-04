@@ -4,7 +4,7 @@
 
 Feature-rich routing engine capable of finding optimal paths in milliseconds using a specialized C++ backend and H3 spatial pruning.
 
-[Architecture Overview](docs/architecture_overview.md)
+[Architecture Overview](docs/architecture_overview.md) | [📊 Interactive Diagrams](https://khoshkhah.github.io/h3-routing-platform/diagrams/)
 
 ## Project Structure
 
@@ -19,7 +19,7 @@ This monorepo contains the entire routing stack:
     *   **[`h3-toolkit`](tools/h3-toolkit/)**: H3 spatial utilities library (C++/Python).
 *   **`sdk/`**: Client libraries.
     *   **[`python`](sdk/python/)**: `pip install h3-routing-client`
-*   **`architecture/`**: [Interactive Architecture Diagrams](architecture/) (LikeC4).
+*   **`architecture/`**: [Interactive Diagrams](https://khoshkhah.github.io/h3-routing-platform/diagrams/) (LikeC4).
 *   **`docs/`**: [Documentation](docs/).
 
 
