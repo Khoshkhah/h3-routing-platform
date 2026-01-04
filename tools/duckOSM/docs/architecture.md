@@ -42,6 +42,11 @@ CREATE TABLE raw.relations AS
   SELECT * FROM ST_READOSM('file.pbf') WHERE kind = 'relation';
 ```
 
+> [!TIP]
+> For more information on loading OSM data into DuckDB, see these resources:
+> - [How to read OSM data with DuckDB (Medium)](https://medium.com/data-science/how-to-read-osm-data-with-duckdb-ffeb15197390)
+> - [DuckDB Spatial Extension GitHub](https://github.com/duckdb/duckdb-spatial)
+
 ---
 
 ## Step 2: Filter Roads
