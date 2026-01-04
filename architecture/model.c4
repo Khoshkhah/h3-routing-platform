@@ -4,19 +4,20 @@
 // See: https://likec4.dev/docs/
 
 specification {
+    // Standard C4 Model element kinds
     element actor {
         style {
             shape person
             color amber
         }
     }
-    element system {
+    element softwareSystem {
         style {
             shape rectangle
             color sky
         }
     }
-    element service {
+    element container {
         style {
             shape rectangle
             color blue
@@ -34,16 +35,10 @@ specification {
             color slate
         }
     }
-    element tool {
+    element externalSystem {
         style {
             shape rectangle
-            color green
-        }
-    }
-    element sdk {
-        style {
-            shape rectangle
-            color secondary
+            color muted
         }
     }
 }
@@ -65,20 +60,20 @@ model {
     // -------------------------------------------------------------------------
     // H3 Routing Platform System
     // -------------------------------------------------------------------------
-    system h3RoutingPlatform {
+    softwareSystem h3RoutingPlatform {
         title "H3 Routing Platform"
         description "High-performance H3-indexed Contraction Hierarchy routing engine"
 
         // =======================================================================
         // Runtime Services
         // =======================================================================
-        service streamlitUI {
+        container streamlitUI {
             title "Streamlit UI"
             technology "Python / Streamlit"
             description "Interactive map visualization and debugging interface"
         }
 
-        service apiGateway {
+        container apiGateway {
             title "API Gateway"
             technology "Python / FastAPI"
             description "REST API on port 8000, coordinates dataset loading and request translation"
@@ -94,7 +89,7 @@ model {
             }
         }
 
-        service cppEngine {
+        container cppEngine {
             title "C++ Routing Engine"
             technology "C++ / Crow HTTP"
             description "High-performance engine on port 8082 with CH algorithms"
@@ -119,7 +114,7 @@ model {
         // =======================================================================
         // Offline Data Processing Tools
         // =======================================================================
-        tool duckOSM {
+        container duckOSM {
             title "duckOSM"
             technology "Python / DuckDB"
             description "Converts OpenStreetMap PBF files to road network in DuckDB"
@@ -153,7 +148,7 @@ model {
             }
         }
 
-        tool shortcutGenerator {
+        container shortcutGenerator {
             title "Shortcut Generator"
             technology "Python / DuckDB"
             description "4-phase H3 hierarchy processor for contraction shortcuts"
@@ -191,7 +186,7 @@ model {
             }
         }
 
-        tool h3Toolkit {
+        container h3Toolkit {
             title "H3 Toolkit"
             technology "C++ / Python"
             description "Shared H3 spatial utilities library"
@@ -213,7 +208,7 @@ model {
         // =======================================================================
         // SDK
         // =======================================================================
-        sdk pythonSDK {
+        container pythonSDK {
             title "Python SDK"
             technology "Python"
             description "h3-routing-client package for programmatic access"
@@ -370,5 +365,21 @@ views {
         description "Components of the OSM-to-routing-network converter"
 
         include *
+    }
+
+    // =========================================================================
+    // View 9: Routing Request Sequence (Dynamic)
+    // =========================================================================
+    view routingSequence {
+        title "Routing Request Sequence"
+        description "Runtime flow: User → Streamlit → API Gateway → C++ Engine → Response"
+
+        include
+            developer,
+            h3RoutingPlatform.streamlitUI,
+            h3RoutingPlatform.apiGateway,
+            h3RoutingPlatform.apiGateway.*,
+            h3RoutingPlatform.cppEngine,
+            h3RoutingPlatform.cppEngine.*
     }
 }
