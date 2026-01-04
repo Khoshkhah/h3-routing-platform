@@ -1,16 +1,17 @@
 # H3 Routing Platform Monorepo Makefile
 
-.PHONY: help install build run-engine run-api clean
+.PHONY: help install build run-engine run-api run-streamlit clean
 
 # Default target
 help:
 	@echo "H3 Routing Platform - Monorepo Commands"
 	@echo "---------------------------------------"
-	@echo "  make install      : Install dependencies for all services"
-	@echo "  make build        : Build the C++ Routing Engine"
-	@echo "  make run-engine   : Start the C++ Server (Port 8082)"
-	@echo "  make run-api      : Start the Python API Gateway (Port 8000)"
-	@echo "  make clean        : Clean build artifacts"
+	@echo "  make install       : Install dependencies for all services"
+	@echo "  make build         : Build the C++ Routing Engine"
+	@echo "  make run-engine    : Start the C++ Server (Port 8082)"
+	@echo "  make run-api       : Start the Python API Gateway (Port 8000)"
+	@echo "  make run-streamlit : Start the Streamlit UI (Port 8501)"
+	@echo "  make clean         : Clean build artifacts"
 
 # --- Install Dependencies ---
 install:
@@ -34,6 +35,10 @@ run-engine:
 run-api:
 	@echo "Starting API Gateway..."
 	cd services/api-gateway && ./scripts/start_api.sh
+
+run-streamlit:
+	@echo "Starting Streamlit UI..."
+	cd services/api-gateway && ./scripts/start_streamlit.sh
 
 # --- Utilities ---
 clean:

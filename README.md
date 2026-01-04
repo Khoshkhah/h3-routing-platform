@@ -47,8 +47,11 @@ Start the C++ Engine and Python API Gateway:
 # Terminal 1: Core Engine
 make run-engine
 
-# Terminal 2: API & UI
+# Terminal 2: API Gateway
 make run-api
+
+# Terminal 3: Streamlit UI
+make run-streamlit
 ```
 
 Visit the UI at **http://localhost:8501**.
