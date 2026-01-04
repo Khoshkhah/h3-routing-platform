@@ -1,6 +1,6 @@
 # H3 Routing Platform
 
-**A high-performance, H3-indexed Contraction Hierarchy routing engine for city-scale navigation.**
+**A high-performance, H3 Spatial Hierarchy routing engine for city-scale navigation.**
 
 Feature-rich routing engine capable of finding optimal paths in milliseconds using a specialized C++ backend and H3 spatial pruning.
 
