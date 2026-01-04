@@ -26,11 +26,11 @@ The H3 Routing Platform provides a complete end-to-end solution for preparing, h
 
 | Topic | Description | Link |
 | :--- | :--- | :--- |
-| **Architecture** | System design and component interactions | [Architecture Overview](./architecture_overview.md) |
-| **Algorithms** | Deep dive into CH, Dijkstra, and Pruning | [Routing Algorithms](./algorithms.md) |
-| **Data Workflow** | Preparing graph data from OSM | [Data Processing](./data_processing.md) |
-| **API Reference** | HTTP Endpoints and JSON formats | [API Reference](./api_reference.md) |
-| **SDK Manual** | Python and C++ Client Libraries | [SDK Manual](./sdk_manual.md) |
+| **Architecture** | System design and component interactions | [Architecture Overview](architecture_overview) |
+| **Algorithms** | Deep dive into CH, Dijkstra, and Pruning | [Routing Algorithms](algorithms) |
+| **Data Workflow** | Preparing graph data from OSM | [Data Processing](data_processing) |
+| **API Reference** | HTTP Endpoints and JSON formats | [API Reference](api_reference) |
+| **SDK Manual** | Python and C++ Client Libraries | [SDK Manual](sdk_manual) |
 
 ## Quick Installation
 
