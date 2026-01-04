@@ -158,17 +158,36 @@ model {
             technology "Python / DuckDB"
             description "4-phase H3 hierarchy processor for contraction shortcuts"
 
+            component dataLoader {
+                description "Loads edges and edge_graph from DuckDB into working tables"
+            }
             component phase1 {
-                description "Phase 1: Forward Chunked (res 15→7)"
+                title "Phase 1: Forward Chunked"
+                description "Processes res 15→7 in parallel chunks per partition cell"
+            }
+            component cellAssigner {
+                description "Assigns shortcuts to H3 cells based on LCA resolution"
+            }
+            component shortestPathSolver {
+                description "Computes optimal shortcuts via SciPy/DuckDB graph algorithms"
             }
             component phase2 {
-                description "Phase 2: Forward Consolidation (res 6→0)"
+                title "Phase 2: Forward Consolidation"
+                description "Merges cells upward res 6→0, deduplicating via cost"
             }
             component phase3 {
-                description "Phase 3: Backward Consolidation (res 0→7)"
+                title "Phase 3: Backward Consolidation"
+                description "Splits cells downward res 0→7, re-partitioning shortcuts"
             }
             component phase4 {
-                description "Phase 4: Backward Chunked (res 8→15)"
+                title "Phase 4: Backward Chunked"
+                description "Processes res 8→15 in parallel chunks, finalizing all resolutions"
+            }
+            component deduplicator {
+                description "Removes redundant shortcuts keeping minimum cost"
+            }
+            component finalizer {
+                description "Exports final shortcuts to Parquet and DuckDB schema"
             }
         }
 
@@ -234,10 +253,16 @@ model {
     h3RoutingPlatform.shortcutGenerator -> h3RoutingPlatform.duckdb "Writes shortcuts"
     h3RoutingPlatform.h3Toolkit -> h3RoutingPlatform.shortcutGenerator "H3 utilities"
   
-    // Shortcut Generator phases
-    h3RoutingPlatform.shortcutGenerator.phase1 -> h3RoutingPlatform.shortcutGenerator.phase2 "Flows to"
-    h3RoutingPlatform.shortcutGenerator.phase2 -> h3RoutingPlatform.shortcutGenerator.phase3 "Flows to"
-    h3RoutingPlatform.shortcutGenerator.phase3 -> h3RoutingPlatform.shortcutGenerator.phase4 "Flows to"
+    // Shortcut Generator internal dataflow
+    h3RoutingPlatform.shortcutGenerator.dataLoader -> h3RoutingPlatform.shortcutGenerator.phase1 "Loads edges"
+    h3RoutingPlatform.shortcutGenerator.phase1 -> h3RoutingPlatform.shortcutGenerator.cellAssigner "Per iteration"
+    h3RoutingPlatform.shortcutGenerator.cellAssigner -> h3RoutingPlatform.shortcutGenerator.shortestPathSolver "Active shortcuts"
+    h3RoutingPlatform.shortcutGenerator.shortestPathSolver -> h3RoutingPlatform.shortcutGenerator.deduplicator "Optimal paths"
+    h3RoutingPlatform.shortcutGenerator.phase1 -> h3RoutingPlatform.shortcutGenerator.phase2 "Chunked outputs"
+    h3RoutingPlatform.shortcutGenerator.phase2 -> h3RoutingPlatform.shortcutGenerator.phase3 "Consolidated to res 0"
+    h3RoutingPlatform.shortcutGenerator.phase3 -> h3RoutingPlatform.shortcutGenerator.phase4 "Re-partitioned"
+    h3RoutingPlatform.shortcutGenerator.phase4 -> h3RoutingPlatform.shortcutGenerator.finalizer "All resolutions done"
+    h3RoutingPlatform.shortcutGenerator.finalizer -> h3RoutingPlatform.duckdb "Writes shortcuts schema"
   
     // duckOSM internal pipeline
     h3RoutingPlatform.duckOSM.pbfLoader -> h3RoutingPlatform.duckOSM.roadFilter "Flows to"
