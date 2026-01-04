@@ -62,3 +62,7 @@ Visit the UI at **http://localhost:8501**.
 *   [SDK Manual](docs/sdk_manual.md)
 *   [C++ Engine Deep Dive](docs/cpp_engine_deep_dive.md)
 *   [Future Roadmap](docs/roadmap.md)
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
