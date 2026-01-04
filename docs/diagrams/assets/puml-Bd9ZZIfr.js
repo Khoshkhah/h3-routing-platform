@@ -1,0 +1,1 @@
+import{_ as t}from"./main-eeJD9ar_.js";import"./vendors-BTBHx9vr.js";import"./e-BBHBy5BD.js";import"./i-CC2pEfs-.js";import"./likec4-BwupCMQD.js";import"./o-CWnOT_pL.js";let i={default:()=>t(()=>import("./puml-BHUh--V2.js"),[])};async function _(o){const r=i[o];if(!r)throw new Error("Unknown projectId: "+o);return await r()}export{_ as loadPumlSources,i as loadPumlSourcesFn};
