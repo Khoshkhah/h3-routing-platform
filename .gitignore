@@ -30,6 +30,7 @@ bin/
 
 # Editors
 .vscode/
+!.vscode/extensions.json
 .idea/
 
 # Data (Ignore large files)
@@ -53,3 +54,6 @@ logs/
 *.tmp
 services/engine-cpp/cpp/build/
 services/engine-cpp/build/
+
+# LikeC4 build output
+architecture/dist/

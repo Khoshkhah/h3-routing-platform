@@ -1,0 +1,349 @@
+// ============================================================================
+// H3 Routing Platform - Architecture Model
+// ============================================================================
+// See: https://likec4.dev/docs/
+
+specification {
+    element actor {
+        style {
+            shape person
+            color amber
+        }
+    }
+    element system {
+        style {
+            shape rectangle
+            color sky
+        }
+    }
+    element service {
+        style {
+            shape rectangle
+            color blue
+        }
+    }
+    element component {
+        style {
+            shape rectangle
+            color indigo
+        }
+    }
+    element database {
+        style {
+            shape storage
+            color slate
+        }
+    }
+    element tool {
+        style {
+            shape rectangle
+            color green
+        }
+    }
+    element sdk {
+        style {
+            shape rectangle
+            color secondary
+        }
+    }
+}
+
+model {
+    // -------------------------------------------------------------------------
+    // External Actors
+    // -------------------------------------------------------------------------
+    actor developer {
+        title "Developer"
+        description "Uses Streamlit UI for testing and Python SDK for integration"
+    }
+
+    actor externalClient {
+        title "External Client"
+        description "Any application consuming the routing REST API"
+    }
+
+    // -------------------------------------------------------------------------
+    // H3 Routing Platform System
+    // -------------------------------------------------------------------------
+    system h3RoutingPlatform {
+        title "H3 Routing Platform"
+        description "High-performance H3-indexed Contraction Hierarchy routing engine"
+
+        // =======================================================================
+        // Runtime Services
+        // =======================================================================
+        service streamlitUI {
+            title "Streamlit UI"
+            technology "Python / Streamlit"
+            description "Interactive map visualization and debugging interface"
+        }
+
+        service apiGateway {
+            title "API Gateway"
+            technology "Python / FastAPI"
+            description "REST API on port 8000, coordinates dataset loading and request translation"
+
+            component datasetRegistry {
+                description "Manages available datasets from datasets.yaml"
+            }
+            component coordTranslator {
+                description "Converts lat/lon to graph edge IDs via spatial index"
+            }
+            component routeHandler {
+                description "Validates requests and forwards to C++ engine"
+            }
+        }
+
+        service cppEngine {
+            title "C++ Routing Engine"
+            technology "C++ / Crow HTTP"
+            description "High-performance engine on port 8082 with CH algorithms"
+
+            component shortcutGraph {
+                description "Graph with adjacency lists, shortcuts, and edge metadata"
+            }
+            component csrGraph {
+                description "Compressed Sparse Row graph for memory efficiency"
+            }
+            component queryAlgorithms {
+                description "Dijkstra, Bidirectional, Pruned, Unidirectional CH"
+            }
+            component pathExpander {
+                description "Resolves shortcut paths to base edge sequences"
+            }
+            component spatialIndex {
+                description "H3 or R-tree index for nearest edge lookup"
+            }
+        }
+
+        // =======================================================================
+        // Offline Data Processing Tools
+        // =======================================================================
+        tool duckOSM {
+            title "duckOSM"
+            technology "Python / DuckDB"
+            description "Converts OpenStreetMap PBF files to road network in DuckDB"
+
+            component pbfLoader {
+                description "Loads PBF via ST_READOSM extension"
+            }
+            component roadFilter {
+                description "Filters ways to highway types only"
+            }
+            component graphBuilder {
+                description "Creates directed edges from OSM ways"
+            }
+            component graphSimplifier {
+                description "Contracts degree-2 nodes to simplify graph"
+            }
+            component speedProcessor {
+                description "Infers speed limits from highway tags"
+            }
+            component costCalculator {
+                description "Calculates travel time costs per edge"
+            }
+            component restrictionProcessor {
+                description "Extracts turn restrictions from relations"
+            }
+            component h3Indexer {
+                description "Adds H3 cell indexing to edges"
+            }
+            component edgeGraphBuilder {
+                description "Builds edge-to-edge adjacency graph"
+            }
+        }
+
+        tool shortcutGenerator {
+            title "Shortcut Generator"
+            technology "Python / DuckDB"
+            description "4-phase H3 hierarchy processor for contraction shortcuts"
+
+            component phase1 {
+                description "Phase 1: Forward Chunked (res 15→7)"
+            }
+            component phase2 {
+                description "Phase 2: Forward Consolidation (res 6→0)"
+            }
+            component phase3 {
+                description "Phase 3: Backward Consolidation (res 0→7)"
+            }
+            component phase4 {
+                description "Phase 4: Backward Chunked (res 8→15)"
+            }
+        }
+
+        tool h3Toolkit {
+            title "H3 Toolkit"
+            technology "C++ / Python"
+            description "Shared H3 spatial utilities library"
+        }
+
+        // =======================================================================
+        // Data Stores
+        // =======================================================================
+        database duckdb {
+            title "DuckDB Database"
+            description "Stores edges, nodes, shortcuts, and dataset info"
+        }
+
+        database osmData {
+            title "OpenStreetMap PBF"
+            description "Raw map data source"
+        }
+
+        // =======================================================================
+        // SDK
+        // =======================================================================
+        sdk pythonSDK {
+            title "Python SDK"
+            technology "Python"
+            description "h3-routing-client package for programmatic access"
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Relationships
+    // -------------------------------------------------------------------------
+  
+    // Developer interactions
+    developer -> h3RoutingPlatform.streamlitUI "Uses for visualization"
+    developer -> h3RoutingPlatform.pythonSDK "Integrates via"
+  
+    // External client
+    externalClient -> h3RoutingPlatform.apiGateway "REST API calls"
+  
+    // Runtime request flow
+    h3RoutingPlatform.streamlitUI -> h3RoutingPlatform.apiGateway "HTTP requests"
+    h3RoutingPlatform.pythonSDK -> h3RoutingPlatform.apiGateway "HTTP requests"
+    h3RoutingPlatform.apiGateway -> h3RoutingPlatform.cppEngine "Route queries (port 8082)"
+  
+    // Internal API Gateway components
+    h3RoutingPlatform.apiGateway.routeHandler -> h3RoutingPlatform.apiGateway.coordTranslator "Uses"
+    h3RoutingPlatform.apiGateway.routeHandler -> h3RoutingPlatform.apiGateway.datasetRegistry "Loads from"
+  
+    // Internal C++ Engine components
+    h3RoutingPlatform.cppEngine.queryAlgorithms -> h3RoutingPlatform.cppEngine.shortcutGraph "Queries"
+    h3RoutingPlatform.cppEngine.queryAlgorithms -> h3RoutingPlatform.cppEngine.csrGraph "Queries"
+    h3RoutingPlatform.cppEngine.queryAlgorithms -> h3RoutingPlatform.cppEngine.pathExpander "Expands shortcuts"
+    h3RoutingPlatform.cppEngine.spatialIndex -> h3RoutingPlatform.cppEngine.shortcutGraph "Indexes edges"
+  
+    // Data generation pipeline
+    h3RoutingPlatform.osmData -> h3RoutingPlatform.duckOSM "Input"
+    h3RoutingPlatform.duckOSM -> h3RoutingPlatform.duckdb "Creates road graph"
+    h3RoutingPlatform.duckdb -> h3RoutingPlatform.shortcutGenerator "Input edges"
+    h3RoutingPlatform.shortcutGenerator -> h3RoutingPlatform.duckdb "Writes shortcuts"
+    h3RoutingPlatform.h3Toolkit -> h3RoutingPlatform.shortcutGenerator "H3 utilities"
+  
+    // Shortcut Generator phases
+    h3RoutingPlatform.shortcutGenerator.phase1 -> h3RoutingPlatform.shortcutGenerator.phase2 "Flows to"
+    h3RoutingPlatform.shortcutGenerator.phase2 -> h3RoutingPlatform.shortcutGenerator.phase3 "Flows to"
+    h3RoutingPlatform.shortcutGenerator.phase3 -> h3RoutingPlatform.shortcutGenerator.phase4 "Flows to"
+  
+    // duckOSM internal pipeline
+    h3RoutingPlatform.duckOSM.pbfLoader -> h3RoutingPlatform.duckOSM.roadFilter "Flows to"
+    h3RoutingPlatform.duckOSM.roadFilter -> h3RoutingPlatform.duckOSM.graphBuilder "Flows to"
+    h3RoutingPlatform.duckOSM.graphBuilder -> h3RoutingPlatform.duckOSM.graphSimplifier "Flows to"
+    h3RoutingPlatform.duckOSM.graphSimplifier -> h3RoutingPlatform.duckOSM.speedProcessor "Flows to"
+    h3RoutingPlatform.duckOSM.speedProcessor -> h3RoutingPlatform.duckOSM.costCalculator "Flows to"
+    h3RoutingPlatform.duckOSM.costCalculator -> h3RoutingPlatform.duckOSM.restrictionProcessor "Flows to"
+    h3RoutingPlatform.duckOSM.restrictionProcessor -> h3RoutingPlatform.duckOSM.edgeGraphBuilder "Flows to"
+    h3RoutingPlatform.duckOSM.edgeGraphBuilder -> h3RoutingPlatform.duckOSM.h3Indexer "Flows to"
+
+    // Engine loads data
+    h3RoutingPlatform.duckdb -> h3RoutingPlatform.cppEngine "Loads at startup"
+}
+
+views {
+    // =========================================================================
+    // View 1: System Context
+    // =========================================================================
+    view index {
+        title "System Context"
+        description "High-level view showing the H3 Routing Platform and its external actors"
+
+        include *
+    }
+
+    // =========================================================================
+    // View 2: Container Overview
+    // =========================================================================
+    view containerView of h3RoutingPlatform {
+        title "Container Overview"
+        description "All services, tools, databases, and SDKs in the platform"
+
+        include *
+    }
+
+    // =========================================================================
+    // View 3: Data Pipeline
+    // =========================================================================
+    view dataPipeline {
+        title "Offline Data Pipeline"
+        description "Data generation flow from OSM to ready-to-use shortcuts"
+
+        include
+            h3RoutingPlatform.osmData,
+            h3RoutingPlatform.duckOSM,
+            h3RoutingPlatform.duckdb,
+            h3RoutingPlatform.shortcutGenerator,
+            h3RoutingPlatform.shortcutGenerator.*,
+            h3RoutingPlatform.h3Toolkit
+    }
+
+    // =========================================================================
+    // View 4: Runtime Request Flow
+    // =========================================================================
+    view runtimeFlow {
+        title "Runtime Request Flow"
+        description "How a routing request flows through the system"
+
+        include
+            developer,
+            externalClient,
+            h3RoutingPlatform.streamlitUI,
+            h3RoutingPlatform.pythonSDK,
+            h3RoutingPlatform.apiGateway,
+            h3RoutingPlatform.cppEngine,
+            h3RoutingPlatform.duckdb
+    }
+
+    // =========================================================================
+    // View 5: C++ Engine Components
+    // =========================================================================
+    view engineComponents of h3RoutingPlatform.cppEngine {
+        title "C++ Engine Internals"
+        description "Components inside the high-performance routing engine"
+
+        include *
+    }
+
+    // =========================================================================
+    // View 6: API Gateway Components
+    // =========================================================================
+    view apiGatewayComponents of h3RoutingPlatform.apiGateway {
+        title "API Gateway Internals"
+        description "Components inside the Python FastAPI middleware"
+
+        include *
+    }
+
+    // =========================================================================
+    // View 7: Shortcut Generator Phases
+    // =========================================================================
+    view shortcutPhases of h3RoutingPlatform.shortcutGenerator {
+        title "Shortcut Generator Phases"
+        description "4-phase H3 hierarchical processing pipeline"
+
+        include *
+    }
+
+    // =========================================================================
+    // View 8: duckOSM Components
+    // =========================================================================
+    view duckOSMComponents of h3RoutingPlatform.duckOSM {
+        title "duckOSM Processing Pipeline"
+        description "Components of the OSM-to-routing-network converter"
+
+        include *
+    }
+}

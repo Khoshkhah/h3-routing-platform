@@ -6,6 +6,8 @@ nav_order: 2
 
 # Architecture Overview
 
+> **📊 Interactive Diagrams**: Run `cd architecture && npx likec4 preview` to view the full architecture interactively.
+
 This project is a high-performance **H3 Spatial Hierarchy** routing engine designed for efficient pathfinding on large road networks. It consists of three main layers: Data Generation, Routing Engine (C++), and Application Layer (Python/UI).
 
 ```mermaid

@@ -1,0 +1,5 @@
+{
+    // LikeC4 Configuration
+    "$schema": "https://likec4.dev/config.schema.json",
+    "output": "./dist"
+}

@@ -19,8 +19,9 @@ This monorepo contains the entire routing stack:
     *   **[`h3-toolkit`](tools/h3-toolkit/)**: H3 spatial utilities library (C++/Python).
 *   **`sdk/`**: Client libraries.
     *   **[`python`](sdk/python/)**: `pip install h3-routing-client`
-    *   **[`cpp`](sdk/cpp/)**: Header-only C++ client.
+*   **`architecture/`**: [Interactive Architecture Diagrams](architecture/) (LikeC4).
 *   **`docs/`**: [Documentation](docs/).
+
 
 
 ## Getting Started
