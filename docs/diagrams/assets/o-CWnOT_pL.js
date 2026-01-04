@@ -1,0 +1,1 @@
+const s={View:"likec4-view"};let t="/h3-routing-platform/diagrams/";t.endsWith("/")||(t=t+"/");const o="LikeC4",i=t,a="https://kroki.io/d2/svg",e="https://kroki.io/plantuml/svg";export{s as C,a,i as b,e as k,o as p};

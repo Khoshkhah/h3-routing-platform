@@ -54,6 +54,3 @@ logs/
 *.tmp
 services/engine-cpp/cpp/build/
 services/engine-cpp/build/
-
-# LikeC4 build output
-architecture/dist/
