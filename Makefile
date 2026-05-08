@@ -1,17 +1,27 @@
 # H3 Routing Platform Monorepo Makefile
 
-.PHONY: help install build run-engine run-api run-streamlit clean
+.PHONY: help setup data install build run-engine run-api run-streamlit clean
 
 # Default target
 help:
 	@echo "H3 Routing Platform - Monorepo Commands"
 	@echo "---------------------------------------"
-	@echo "  make install       : Install dependencies for all services"
+	@echo "  make setup         : Full one-time environment setup (submodules, conda, build)"
+	@echo "  make data CITY=... : Prepare routing data for a city (e.g. make data CITY=somerset)"
 	@echo "  make build         : Build the C++ Routing Engine"
 	@echo "  make run-engine    : Start the C++ Server (Port 8082)"
 	@echo "  make run-api       : Start the Python API Gateway (Port 8000)"
 	@echo "  make run-streamlit : Start the Streamlit UI (Port 8501)"
 	@echo "  make clean         : Clean build artifacts"
+
+# --- Setup ---
+setup:
+	bash scripts/setup.sh
+
+# --- Data Preparation ---
+data:
+	@if [ -z "$(CITY)" ]; then echo "Usage: make data CITY=<city>  (e.g. make data CITY=somerset)"; exit 1; fi
+	bash scripts/prepare_data.sh $(CITY)
 
 # --- Install Dependencies ---
 install:
