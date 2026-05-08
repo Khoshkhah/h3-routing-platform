@@ -52,7 +52,17 @@ make data CITY=somerset
 
 This will automatically download the city boundary, regional OSM extract, filter it, import into DuckDB, and generate contraction hierarchy shortcuts. The generated `data/somerset.duckdb` will be picked up automatically by the API gateway.
 
-To add support for a new city, add an entry to `tools/duckOSM/config/sources.yaml` and provide the corresponding duckOSM and shortcut-generator config files.
+**Adding a new city:**
+
+1. Find the regional OSM extract on [Geofabrik](https://download.geofabrik.de/) and copy the `.osm.pbf` download URL.
+2. Add an entry to `tools/duckOSM/config/sources.yaml`:
+```yaml
+  your_city:
+    place: "City Name, Region, Country"  # used to download the boundary automatically
+    pbf_url: "https://download.geofabrik.de/region/country-latest.osm.pbf"
+    pbf_region: "country"               # used as the filename for the regional PBF
+```
+3. Run `make data CITY=your_city` — configs and API gateway registration are handled automatically.
 
 ### 4. Run the Platform
 ```bash

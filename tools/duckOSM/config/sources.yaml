@@ -18,3 +18,8 @@ sources:
     place: "Metro Vancouver Regional District, British Columbia, Canada"
     pbf_url: "https://download.geofabrik.de/north-america/canada/british-columbia-latest.osm.pbf"
     pbf_region: "british-columbia"
+
+  tehran:
+    place: "Tehran, Tehran Province, Iran"
+    pbf_url: "https://download.geofabrik.de/asia/iran-latest.osm.pbf"
+    pbf_region: "iran"
