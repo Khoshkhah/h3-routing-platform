@@ -23,3 +23,8 @@ sources:
     place: "Tehran, Tehran Province, Iran"
     pbf_url: "https://download.geofabrik.de/asia/iran-latest.osm.pbf"
     pbf_region: "iran"
+
+  tartu:
+    place: "Tartu, Estonia"
+    pbf_url: "https://download.geofabrik.de/europe/estonia-latest.osm.pbf"
+    pbf_region: "estonia"

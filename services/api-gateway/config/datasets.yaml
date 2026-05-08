@@ -22,3 +22,7 @@ datasets:
   db_path: '{data_root}/tehran.duckdb'
   short_name: Tehran
   description: Tehran, Tehran Province, Iran
+- name: tartu
+  db_path: '{data_root}/tartu.duckdb'
+  short_name: Tartu
+  description: Tartu, Estonia
