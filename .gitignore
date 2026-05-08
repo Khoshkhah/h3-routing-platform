@@ -38,6 +38,8 @@ data/
 **/data/
 **/output/
 !data/.gitkeep
+!**/data/maps/.gitkeep
+!**/data/boundaries/.gitkeep
 *.parquet
 *.osrm
 *.pbf
@@ -47,6 +49,7 @@ data/
 # Logs
 *.log
 logs/
+!logs/.gitkeep
 
 # Routing Engine Specific
 *.duckdb

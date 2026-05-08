@@ -40,6 +40,8 @@ message(STATUS "Found Parquet: ${Parquet_DIR}")
 message(STATUS "Found H3: ${H3_LIBRARY}")
 message(STATUS "Found Boost: ${Boost_INCLUDE_DIRS}")
 
+add_compile_definitions(CROW_USE_BOOST)
+
 # Create routing library (core algorithms)
 add_library(routing_lib STATIC
     src/shortcut_graph.cpp

@@ -44,7 +44,7 @@ echo "      -> API running (PID $API_PID). Logs: logs/api.log"
 echo "[3/3] Starting Streamlit UI..."
 echo "      -> Opening http://localhost:8501"
 cd services/api-gateway
-streamlit run app/streamlit_app.py > ../../logs/streamlit.log 2>&1 &
+streamlit run app/streamlit_app.py --server.headless true --browser.gatherUsageStats false > ../../logs/streamlit.log 2>&1 &
 UI_PID=$!
 cd ../..
 

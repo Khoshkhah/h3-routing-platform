@@ -59,6 +59,8 @@ dependencies:
   
   - pip:
     - osmium  # Often better via pip
+    - -e tools/duckOSM/
+    - -e sdk/python/
     
 variables:
   # Ensure CMake uses the conda compilers
