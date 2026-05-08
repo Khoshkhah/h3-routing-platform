@@ -165,13 +165,14 @@ class GraphSimplifier(BaseProcessor):
                 ST_GeomFromText('LINESTRING(' || list_aggregate(coord_list, 'string_agg', ', ') || ')') AS geometry,
                 FALSE AS is_reverse
             FROM segment_groups
+            WHERE len(coord_list) >= 2
         """)
-        
+
         # Now calculate actual lengths using Haversine formula
         # ST_Length_Spheroid is broken in DuckDB spatial for certain coordinate ranges
+        self.execute("ALTER TABLE simplified_edges_forward ADD COLUMN length_m FLOAT")
+
         self.execute("""
-            ALTER TABLE simplified_edges_forward ADD COLUMN length_m FLOAT;
-            
             WITH edge_npoints AS (
                 SELECT edge_id, geometry, ST_NPoints(geometry) as npoints
                 FROM simplified_edges_forward
@@ -219,16 +220,15 @@ class GraphSimplifier(BaseProcessor):
             return
         
         logger.info(f"  Splitting {loop_count} self-loop edges...")
-        
+
         # Get max edge_id to assign new IDs
         max_edge_id = self.fetchone("SELECT MAX(edge_id) FROM simplified_edges_forward")[0] or 0
-        
-        # Create virtual node IDs (negative to avoid collision with OSM IDs)
-        # and split the self-loops into two halves
+
         self.execute(f"""
             CREATE OR REPLACE TEMP TABLE split_loops AS
             WITH loops AS (
-                SELECT 
+                SELECT
+                    row_number() OVER (ORDER BY edge_id) AS loop_row,
                     edge_id,
                     source,
                     osm_id,
@@ -241,15 +241,15 @@ class GraphSimplifier(BaseProcessor):
                     refs,
                     geometry,
                     length_m,
-                    -- Virtual node at midpoint (negative ID)
                     -(edge_id) AS virtual_node_id,
                     ST_PointN(geometry, (ST_NPoints(geometry) / 2 + 1)::INTEGER) AS midpoint_geom
                 FROM simplified_edges_forward
                 WHERE source = target
+                  AND ST_NPoints(geometry) >= 3
             )
             -- First half: source -> midpoint
-            SELECT 
-                ({max_edge_id} + row_number() OVER () * 2 - 1)::INTEGER AS edge_id,
+            SELECT
+                ({max_edge_id} + loop_row * 2 - 1)::INTEGER AS edge_id,
                 source,
                 virtual_node_id AS target,
                 osm_id,
@@ -260,18 +260,18 @@ class GraphSimplifier(BaseProcessor):
                 lanes,
                 surface,
                 refs[1:len(refs)/2 + 1] as refs,
-                ST_LineSubstring(geometry, 0, 0.5) AS geometry,
+                ST_AsText(ST_LineSubstring(geometry, 0, 0.5)) AS geometry_text,
                 FALSE AS is_reverse,
                 length_m / 2 AS length_m,
                 virtual_node_id,
-                midpoint_geom
+                ST_AsText(midpoint_geom) AS midpoint_text
             FROM loops
             UNION ALL
             -- Second half: midpoint -> source (since source == target for loops)
-            SELECT 
-                ({max_edge_id} + row_number() OVER () * 2)::INTEGER AS edge_id,
+            SELECT
+                ({max_edge_id} + loop_row * 2)::INTEGER AS edge_id,
                 virtual_node_id AS source,
-                loops.source AS target, -- Use original source (which equals target in a loop)
+                loops.source AS target,
                 osm_id,
                 highway,
                 name,
@@ -280,33 +280,41 @@ class GraphSimplifier(BaseProcessor):
                 lanes,
                 surface,
                 refs[len(refs)/2 + 1:] as refs,
-                ST_LineSubstring(geometry, 0.5, 1) AS geometry,
+                ST_AsText(ST_LineSubstring(geometry, 0.5, 1)) AS geometry_text,
                 FALSE AS is_reverse,
                 length_m / 2 AS length_m,
                 virtual_node_id,
-                midpoint_geom
+                ST_AsText(midpoint_geom) AS midpoint_text
             FROM loops
         """)
-        
-        # Store virtual nodes - use the endpoint of the first-half geometry for exact match
+
+        # Store virtual nodes
         self.execute("""
             CREATE OR REPLACE TEMP TABLE virtual_nodes AS
-            SELECT DISTINCT 
-                virtual_node_id AS node_id, 
-                ST_EndPoint(geometry) AS geom  -- Use actual geometry endpoint for exact match
+            SELECT DISTINCT
+                virtual_node_id AS node_id,
+                ST_GeomFromText(midpoint_text) AS geom
             FROM split_loops
-            WHERE source > 0  -- Only from the first-half edges (source -> midpoint)
+            WHERE source > 0
         """)
-        
-        # Remove original self-loops from simplified_edges_forward
-        self.execute("DELETE FROM simplified_edges_forward WHERE source = target")
-        
-        # Add split edges (without the virtual_node columns)
+
+        # Rebuild simplified_edges_forward as a new table to avoid DuckDB MVCC/GEOMETRY
+        # bug where INSERT INTO a table that was previously ALTER'd + UPDATE'd fails to commit
         self.execute("""
-            INSERT INTO simplified_edges_forward 
-            SELECT edge_id, source, target, osm_id, highway, name, maxspeed, oneway, lanes, surface, refs, geometry, is_reverse, length_m
+            CREATE TABLE simplified_edges_forward_new AS
+            SELECT edge_id, source, target, osm_id, highway, name, maxspeed, oneway, lanes, surface,
+                   refs, geometry, is_reverse, length_m
+            FROM simplified_edges_forward
+            WHERE source != target
+            UNION ALL
+            SELECT edge_id, source, target, osm_id, highway, name, maxspeed, oneway, lanes, surface,
+                   refs, ST_GeomFromText(geometry_text) AS geometry, is_reverse, length_m
             FROM split_loops
+            WHERE geometry_text IS NOT NULL
+              AND ST_NPoints(ST_GeomFromText(geometry_text)) >= 2
         """)
+        self.execute("DROP TABLE simplified_edges_forward")
+        self.execute("ALTER TABLE simplified_edges_forward_new RENAME TO simplified_edges_forward")
 
     def _finalize_tables(self) -> None:
         """Replace edges and nodes with simplified versions."""

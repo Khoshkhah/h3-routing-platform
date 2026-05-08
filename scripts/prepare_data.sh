@@ -17,7 +17,7 @@ cd "$PROJECT_ROOT"
 SOURCES_FILE="tools/duckOSM/config/sources.yaml"
 
 # Parse sources.yaml with Python (already in env)
-read -r PLACE PBF_URL PBF_REGION <<< $(python3 - <<EOF
+IFS='|' read -r PLACE PBF_URL PBF_REGION <<< $(python3 - <<EOF
 import yaml, sys
 with open("$SOURCES_FILE") as f:
     sources = yaml.safe_load(f)["sources"]
@@ -26,7 +26,7 @@ if "$CITY" not in sources:
     print(f"Available: {', '.join(sources.keys())}", file=sys.stderr)
     sys.exit(1)
 s = sources["$CITY"]
-print(s["place"], s["pbf_url"], s["pbf_region"])
+print(f"{s['place']}|{s['pbf_url']}|{s['pbf_region']}")
 EOF
 )
 
@@ -83,4 +83,8 @@ python3 main.py --config "config/${CITY}_duckdb.yaml"
 cd "$PROJECT_ROOT"
 
 echo ""
+# 5. Add visualization metadata (boundary, center, zoom) to DuckDB
+echo "[5/5] Adding visualization metadata..."
+python3 scripts/add_visualization_metadata.py --city "$CITY"
+
 echo "Data for '$CITY' is ready at data/${CITY}.duckdb"
