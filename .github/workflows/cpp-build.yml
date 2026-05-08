@@ -1,43 +1,18 @@
-name: CI
+name: C++ Build
 
 on:
   push:
     branches: ["main"]
+    paths:
+      - "services/engine-cpp/cpp/**"
   pull_request:
+    paths:
+      - "services/engine-cpp/cpp/**"
 
 jobs:
-  python-lint:
-    name: Python Lint
-    runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'pull_request' ||
-      contains(toJson(github.event.commits), 'sdk/python') ||
-      contains(toJson(github.event.commits), 'services/api-gateway/api') ||
-      contains(toJson(github.event.commits), 'services/engine-cpp/pyengine')
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - run: pip install ruff
-
-      - name: Lint Python SDK
-        run: ruff check sdk/python/
-
-      - name: Lint API Gateway
-        run: ruff check services/api-gateway/api/
-
-      - name: Lint pyengine
-        run: ruff check services/engine-cpp/pyengine/
-
-  cpp-build:
+  build:
     name: C++ Build
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'pull_request' ||
-      contains(toJson(github.event.commits), 'services/engine-cpp/cpp')
     steps:
       - uses: actions/checkout@v4
         with:

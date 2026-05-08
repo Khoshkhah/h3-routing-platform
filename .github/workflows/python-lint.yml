@@ -1,0 +1,36 @@
+name: Python Lint
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "sdk/python/**"
+      - "services/api-gateway/api/**"
+      - "services/engine-cpp/pyengine/**"
+  pull_request:
+    paths:
+      - "sdk/python/**"
+      - "services/api-gateway/api/**"
+      - "services/engine-cpp/pyengine/**"
+
+jobs:
+  lint:
+    name: Python Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install ruff
+
+      - name: Lint Python SDK
+        run: ruff check sdk/python/
+
+      - name: Lint API Gateway
+        run: ruff check services/api-gateway/api/
+
+      - name: Lint pyengine
+        run: ruff check services/engine-cpp/pyengine/
