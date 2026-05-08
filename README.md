@@ -71,6 +71,11 @@ bash start_all.sh
 
 Visit the UI at **http://localhost:8501**.
 
+To stop all services:
+```bash
+bash stop_all.sh
+```
+
 ## Documentation
 *   [Architecture Overview](docs/architecture_overview.md)
 *   [API Reference](docs/api_reference.md)
