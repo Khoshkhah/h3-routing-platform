@@ -8,6 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DUCKOSM_CONFIG_DIR = PROJECT_ROOT / "tools/duckOSM/config"
 SHORTCUT_CONFIG_DIR = PROJECT_ROOT / "tools/shortcut-generator/config"
 SOURCES_FILE = DUCKOSM_CONFIG_DIR / "sources.yaml"
+DATASETS_FILE = PROJECT_ROOT / "services/api-gateway/config/datasets.yaml"
 
 
 def load_sources():
@@ -55,6 +56,29 @@ def create_shortcut_config(city: str):
     print(f"  Created: {output_file.relative_to(PROJECT_ROOT)}")
 
 
+def register_dataset(city: str, place: str):
+    with open(DATASETS_FILE) as f:
+        datasets_config = yaml.safe_load(f)
+
+    existing = [d["name"] for d in datasets_config["datasets"]]
+    if city in existing:
+        print(f"  datasets.yaml already contains: {city}")
+        return
+
+    short_name = place.split(",")[0].strip()
+    datasets_config["datasets"].append({
+        "name": city,
+        "db_path": f"{{data_root}}/{city}.duckdb",
+        "short_name": short_name,
+        "description": place,
+    })
+
+    with open(DATASETS_FILE, "w") as f:
+        yaml.dump(datasets_config, f, default_flow_style=False, sort_keys=False)
+
+    print(f"  Added '{city}' to services/api-gateway/config/datasets.yaml")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate duckOSM and shortcut-generator configs for a city")
     parser.add_argument("--city", required=True, help="City name (must exist in sources.yaml)")
@@ -71,6 +95,7 @@ def main():
     print(f"Generating configs for: {city}")
     create_duckosm_config(city)
     create_shortcut_config(city)
+    register_dataset(city, sources[city]["place"])
     print("Done.")
 
 
