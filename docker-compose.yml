@@ -1,0 +1,48 @@
+services:
+  engine:
+    build:
+      context: .
+      dockerfile: services/engine-cpp/Dockerfile
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    working_dir: /app/services/api-gateway
+    command: >
+      conda run --no-capture-output -n h3-routing
+      python -m uvicorn api.server:app --host 0.0.0.0 --port 8000
+    depends_on:
+      engine:
+        condition: service_healthy
+
+  ui:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+    working_dir: /app/services/api-gateway
+    command: >
+      conda run --no-capture-output -n h3-routing
+      streamlit run app/streamlit_app.py
+      --server.headless true
+      --browser.gatherUsageStats false
+      --server.port 8501
+    depends_on:
+      - api

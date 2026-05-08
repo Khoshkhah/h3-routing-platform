@@ -1,0 +1,35 @@
+# Data files (mounted as volumes)
+data/
+*.duckdb
+*.pbf
+*.osm.pbf
+*.parquet
+*.csv
+
+# Build artifacts
+services/engine-cpp/cpp/build/
+build/
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+
+# Logs
+logs/
+*.log
+
+# Dev tools
+.git/
+.vscode/
+.idea/
+*.ipynb_checkpoints/
+
+# OSM data
+tools/duckOSM/data/maps/
+tools/duckOSM/data/boundaries/
+tools/duckOSM/cache/
+cache/
+
+# Conda env
+miniconda3/
+anaconda3/
