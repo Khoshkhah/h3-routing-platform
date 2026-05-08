@@ -38,6 +38,10 @@ echo "==================================================="
 echo "   Preparing data for: $CITY"
 echo "==================================================="
 
+# 0. Generate configs if missing
+echo "[0/4] Generating config files if missing..."
+python3 scripts/create_city_config.py --city "$CITY"
+
 # 1. Download boundary
 if [ -f "$BOUNDARY_FILE" ]; then
     echo "[1/4] Boundary already exists, skipping..."
@@ -69,7 +73,7 @@ else
 fi
 
 # 4. Import into DuckDB and generate shortcuts
-echo "[4/4] Importing OSM data and generating shortcuts..."
+echo "[4/5] Importing OSM data and generating shortcuts..."
 cd tools/duckOSM
 python3 main.py --config "config/${CITY}.yaml"
 cd "$PROJECT_ROOT"
