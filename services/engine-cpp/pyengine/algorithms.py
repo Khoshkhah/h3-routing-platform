@@ -1,6 +1,6 @@
 import heapq
-from typing import Dict, List, Tuple, Optional, Set, Any
-from .core import Shortcut, ShortestPathData
+from typing import Dict, List, Tuple, Optional, Set
+from .core import ShortestPathData
 from .utils import find_lca, get_resolution, cell_to_parent
 
 INF = float('inf')
@@ -82,7 +82,8 @@ def query_uni_dijkstra(source_edge: int, target_edge: int, data: ShortestPathDat
     
     while pq:
         d, u = heapq.heappop(pq)
-        if d > dist.get(u, INF): continue
+        if d > dist.get(u, INF):
+            continue
         if u == target_edge:
             cost = d + data.edge_meta.get(target_edge, {}).get("cost", 0.0)
             return cost, _reconstruct_uni(parent, u), True
@@ -119,12 +120,14 @@ def query_bi_dijkstra(source_edge: int, target_edge: int, data: ShortestPathData
     meeting = None
     
     while pq_fwd and pq_bwd:
-        if pq_fwd[0][0] + pq_bwd[0][0] >= best: break
+        if pq_fwd[0][0] + pq_bwd[0][0] >= best:
+            break
         
         # Alternating: process queue with smaller top distance
         if pq_fwd[0][0] <= pq_bwd[0][0]:
             d, u = heapq.heappop(pq_fwd)
-            if d > dist_fwd.get(u, INF): continue
+            if d > dist_fwd.get(u, INF):
+                continue
             
             for sc in data.fwd_adj.get(u, []):
                 nd = d + sc.cost
@@ -135,10 +138,13 @@ def query_bi_dijkstra(source_edge: int, target_edge: int, data: ShortestPathData
                     
                     if sc.to_edge in dist_bwd:
                         total = nd + dist_bwd[sc.to_edge]
-                        if total < best: best = total; meeting = sc.to_edge
+                        if total < best:
+                            best = total
+                            meeting = sc.to_edge
         else:
             d, u = heapq.heappop(pq_bwd)
-            if d > dist_bwd.get(u, INF): continue
+            if d > dist_bwd.get(u, INF):
+                continue
             
             for sc in data.bwd_adj.get(u, []):
                 nd = d + sc.cost
@@ -149,9 +155,12 @@ def query_bi_dijkstra(source_edge: int, target_edge: int, data: ShortestPathData
                     
                     if sc.from_edge in dist_fwd:
                         total = dist_fwd[sc.from_edge] + nd
-                        if total < best: best = total; meeting = sc.from_edge
-    
-    if meeting is None: return -1.0, [], False
+                        if total < best:
+                            best = total
+                            meeting = sc.from_edge
+
+    if meeting is None:
+        return -1.0, [], False
     return best, _reconstruct_bi(parent_fwd, parent_bwd, meeting), True
 
 # =============================================================================
@@ -182,49 +191,61 @@ def query_classic(source_edge: int, target_edge: int, data: ShortestPathData) ->
         if pq_fwd:
             d, u = heapq.heappop(pq_fwd)
             
-            if d > dist_fwd.get(u, INF): pass  # Skip stale
-            elif d >= best: pass  # Per-node pruning
+            if d > dist_fwd.get(u, INF):  # Skip stale
+                pass
+            elif d >= best:  # Per-node pruning
+                pass
             else:
                 for sc in data.fwd_adj.get(u, []):
-                    if sc.inside != 1: continue  # Inside filter
-                    
+                    if sc.inside != 1:  # Inside filter
+                        continue
+
                     nd = d + sc.cost
                     if nd < dist_fwd.get(sc.to_edge, INF):
                         dist_fwd[sc.to_edge] = nd
                         parent_fwd[sc.to_edge] = u
                         heapq.heappush(pq_fwd, (nd, sc.to_edge))
-                        
+
                         if sc.to_edge in dist_bwd:
                             total = nd + dist_bwd[sc.to_edge]
-                            if total < best: best = total; meeting = sc.to_edge
-        
+                            if total < best:
+                                best = total
+                                meeting = sc.to_edge
+
         # Backward step
         if pq_bwd:
             d, u = heapq.heappop(pq_bwd)
-            
-            if d > dist_bwd.get(u, INF): pass
-            elif d >= best: pass
+
+            if d > dist_bwd.get(u, INF):
+                pass
+            elif d >= best:
+                pass
             else:
                 for sc in data.bwd_adj.get(u, []):
-                    if sc.inside not in [-1, 0]: continue  # Inside filter
-                    
+                    if sc.inside not in [-1, 0]:  # Inside filter
+                        continue
+
                     nd = d + sc.cost
                     if nd < dist_bwd.get(sc.from_edge, INF):
                         dist_bwd[sc.from_edge] = nd
                         parent_bwd[sc.from_edge] = u
                         heapq.heappush(pq_bwd, (nd, sc.from_edge))
-                        
+
                         if sc.from_edge in dist_fwd:
                             total = dist_fwd[sc.from_edge] + nd
-                            if total < best: best = total; meeting = sc.from_edge
-        
+                            if total < best:
+                                best = total
+                                meeting = sc.from_edge
+
         # Early termination
         if pq_fwd and pq_bwd:
-            if pq_fwd[0][0] >= best and pq_bwd[0][0] >= best: break
+            if pq_fwd[0][0] >= best and pq_bwd[0][0] >= best:
+                break
         elif not pq_fwd and not pq_bwd:
             break
-    
-    if meeting is None: return -1.0, [], False
+
+    if meeting is None:
+        return -1.0, [], False
     return best, _reconstruct_bi(parent_fwd, parent_bwd, meeting), True
 
 # =============================================================================
@@ -244,7 +265,8 @@ def query_uni_lca(source_edge: int, target_edge: int, data: ShortestPathData) ->
     
     while pq:
         d, u, u_res, phase = heapq.heappop(pq)
-        if d > dist.get(u, INF): continue
+        if d > dist.get(u, INF):
+            continue
         if u == target_edge:
             return d + data.edge_meta.get(target_edge, {}).get("cost", 0.0), _reconstruct_uni(parent, u), True
             
@@ -252,22 +274,33 @@ def query_uni_lca(source_edge: int, target_edge: int, data: ShortestPathData) ->
             allowed = False
             next_phase = phase
             if phase == 0 or phase == 1:
-                if sc.lca_res > high.res and sc.inside == 1: allowed = True; next_phase = 1
-                elif sc.lca_res <= high.res and sc.inside == 1: allowed = True; next_phase = 2
-                elif sc.inside != 1: allowed = True; next_phase = 2
+                if sc.lca_res > high.res and sc.inside == 1:
+                    allowed = True
+                    next_phase = 1
+                elif sc.lca_res <= high.res and sc.inside == 1:
+                    allowed = True
+                    next_phase = 2
+                elif sc.inside != 1:
+                    allowed = True
+                    next_phase = 2
             elif phase == 2:
-                if sc.inside != 1: allowed = True; next_phase = 3
+                if sc.inside != 1:
+                    allowed = True
+                    next_phase = 3
             elif phase == 3:
-                if sc.inside == -1: allowed = True; next_phase = 3
-                    
-            if not allowed: continue
-            
+                if sc.inside == -1:
+                    allowed = True
+                    next_phase = 3
+
+            if not allowed:
+                continue
+
             nd = d + sc.cost
             if nd < dist.get(sc.to_edge, INF):
                 dist[sc.to_edge] = nd
                 parent[sc.to_edge] = u
                 heapq.heappush(pq, (nd, sc.to_edge, sc.lca_res, next_phase))
-                
+
     return -1.0, [], False
 
 # =============================================================================
@@ -296,25 +329,38 @@ def query_bi_lca(source_edge: int, target_edge: int, data: ShortestPathData) -> 
     meeting_node = None
     
     while pq_fwd and pq_bwd:
-        if pq_fwd[0][0] + pq_bwd[0][0] >= best_total: break
-        
+        if pq_fwd[0][0] + pq_bwd[0][0] >= best_total:
+            break
+
         # Forward step
         if pq_fwd[0][0] <= pq_bwd[0][0]:
             d, u, u_res, phase = heapq.heappop(pq_fwd)
-            if d > dist_fwd.get(u, INF): continue
+            if d > dist_fwd.get(u, INF):
+                continue
             for sc in data.fwd_adj.get(u, []):
                 allowed = False
                 next_phase = phase
                 if phase == 0 or phase == 1:
-                    if sc.lca_res > high.res and sc.inside == 1: allowed = True; next_phase = 1
-                    elif sc.lca_res <= high.res and sc.inside == 1: allowed = True; next_phase = 2
-                    elif sc.inside != 1: allowed = True; next_phase = 2
+                    if sc.lca_res > high.res and sc.inside == 1:
+                        allowed = True
+                        next_phase = 1
+                    elif sc.lca_res <= high.res and sc.inside == 1:
+                        allowed = True
+                        next_phase = 2
+                    elif sc.inside != 1:
+                        allowed = True
+                        next_phase = 2
                 elif phase == 2:
-                    if sc.inside != 1: allowed = True; next_phase = 3
+                    if sc.inside != 1:
+                        allowed = True
+                        next_phase = 3
                 elif phase == 3:
-                    if sc.inside == -1: allowed = True; next_phase = 3
-                
-                if not allowed: continue
+                    if sc.inside == -1:
+                        allowed = True
+                        next_phase = 3
+
+                if not allowed:
+                    continue
                 nd = d + sc.cost
                 if nd < dist_fwd.get(sc.to_edge, INF):
                     dist_fwd[sc.to_edge] = nd
@@ -322,24 +368,38 @@ def query_bi_lca(source_edge: int, target_edge: int, data: ShortestPathData) -> 
                     heapq.heappush(pq_fwd, (nd, sc.to_edge, sc.lca_res, next_phase))
                     if sc.to_edge in dist_bwd:
                         total = nd + dist_bwd[sc.to_edge]
-                        if total < best_total: best_total = total; meeting_node = sc.to_edge
+                        if total < best_total:
+                            best_total = total
+                            meeting_node = sc.to_edge
         # Backward step
         else:
             d, u, u_res, phase = heapq.heappop(pq_bwd)
-            if d > dist_bwd.get(u, INF): continue
+            if d > dist_bwd.get(u, INF):
+                continue
             for sc in data.bwd_adj.get(u, []):
                 allowed = False
                 next_phase = phase
                 if phase == 0 or phase == 1:
-                    if sc.lca_res > high.res and sc.inside == -1: allowed = True; next_phase = 1
-                    elif sc.lca_res <= high.res and sc.inside == -1: allowed = True; next_phase = 2
-                    elif sc.inside != -1: allowed = True; next_phase = 2
+                    if sc.lca_res > high.res and sc.inside == -1:
+                        allowed = True
+                        next_phase = 1
+                    elif sc.lca_res <= high.res and sc.inside == -1:
+                        allowed = True
+                        next_phase = 2
+                    elif sc.inside != -1:
+                        allowed = True
+                        next_phase = 2
                 elif phase == 2:
-                    if sc.inside != -1: allowed = True; next_phase = 3
+                    if sc.inside != -1:
+                        allowed = True
+                        next_phase = 3
                 elif phase == 3:
-                    if sc.inside == 1: allowed = True; next_phase = 3
-                
-                if not allowed: continue
+                    if sc.inside == 1:
+                        allowed = True
+                        next_phase = 3
+
+                if not allowed:
+                    continue
                 nd = d + sc.cost
                 if nd < dist_bwd.get(sc.from_edge, INF):
                     dist_bwd[sc.from_edge] = nd
@@ -347,9 +407,12 @@ def query_bi_lca(source_edge: int, target_edge: int, data: ShortestPathData) -> 
                     heapq.heappush(pq_bwd, (nd, sc.from_edge, sc.lca_res, next_phase))
                     if sc.from_edge in dist_fwd:
                         total = nd + dist_fwd[sc.from_edge]
-                        if total < best_total: best_total = total; meeting_node = sc.from_edge
-                        
-    if meeting_node is None: return -1.0, [], False
+                        if total < best_total:
+                            best_total = total
+                            meeting_node = sc.from_edge
+
+    if meeting_node is None:
+        return -1.0, [], False
     return best_total, _reconstruct_bi(parent_fwd, parent_bwd, meeting_node), True
 
 # =============================================================================
@@ -386,16 +449,21 @@ def query_bi_lca_res(source_edge: int, target_edge: int, data: ShortestPathData)
                 min_arrival_fwd = min(dist_fwd.get(u, INF), min_arrival_fwd)
                 min_arrival_bwd = min(dist_bwd[u], min_arrival_bwd)
                 total = d + dist_bwd[u]
-                if total < best: best = total; meeting_node = u
-            
-            if d > dist_fwd.get(u, INF) or d >= best: pass
+                if total < best:
+                    best = total
+                    meeting_node = u
+
+            if d > dist_fwd.get(u, INF) or d >= best:
+                pass
             else:
                 if u_res < high.res:
                     min_arrival_fwd = min(dist_fwd.get(u, INF), min_arrival_fwd)
                 else:
-                    if u_res == high.res: min_arrival_fwd = min(dist_fwd.get(u, INF), min_arrival_fwd)
+                    if u_res == high.res:
+                        min_arrival_fwd = min(dist_fwd.get(u, INF), min_arrival_fwd)
                     for sc in data.fwd_adj.get(u, []):
-                        if sc.inside != 1: continue
+                        if sc.inside != 1:
+                            continue
                         nd = d + sc.cost
                         if nd < dist_fwd.get(sc.to_edge, INF):
                             dist_fwd[sc.to_edge] = nd
@@ -403,8 +471,10 @@ def query_bi_lca_res(source_edge: int, target_edge: int, data: ShortestPathData)
                             heapq.heappush(pq_fwd, (nd, sc.to_edge, sc.lca_res))
                             if sc.to_edge in dist_bwd:
                                 total = nd + dist_bwd[sc.to_edge]
-                                if total < best: best = total; meeting_node = sc.to_edge
-        
+                                if total < best:
+                                    best = total
+                                    meeting_node = sc.to_edge
+
         # Backward step
         if pq_bwd:
             d, u, u_res = heapq.heappop(pq_bwd)
@@ -412,20 +482,28 @@ def query_bi_lca_res(source_edge: int, target_edge: int, data: ShortestPathData)
                 min_arrival_fwd = min(dist_fwd[u], min_arrival_fwd)
                 min_arrival_bwd = min(dist_bwd.get(u, INF), min_arrival_bwd)
                 total = dist_fwd[u] + d
-                if total < best: best = total; meeting_node = u
-                
-            if d > dist_bwd.get(u, INF) or d >= best: continue
+                if total < best:
+                    best = total
+                    meeting_node = u
+
+            if d > dist_bwd.get(u, INF) or d >= best:
+                continue
             
             check = (u_res >= high.res)
-            if u_res == high.res or not check: min_arrival_bwd = min(dist_bwd.get(u, INF), min_arrival_bwd)
+            if u_res == high.res or not check:
+                min_arrival_bwd = min(dist_bwd.get(u, INF), min_arrival_bwd)
             
             for sc in data.bwd_adj.get(u, []):
                 allowed = False
-                if sc.inside == -1 and check: allowed = True
-                elif sc.inside == 0 and u_res <= high.res: allowed = True
-                elif sc.inside == -2 and not check: allowed = True
-                
-                if not allowed: continue
+                if sc.inside == -1 and check:
+                    allowed = True
+                elif sc.inside == 0 and u_res <= high.res:
+                    allowed = True
+                elif sc.inside == -2 and not check:
+                    allowed = True
+
+                if not allowed:
+                    continue
                 nd = d + sc.cost
                 if nd < dist_bwd.get(sc.from_edge, INF):
                     dist_bwd[sc.from_edge] = nd
@@ -433,8 +511,10 @@ def query_bi_lca_res(source_edge: int, target_edge: int, data: ShortestPathData)
                     heapq.heappush(pq_bwd, (nd, sc.from_edge, sc.lca_res))
                     if sc.from_edge in dist_fwd:
                         total = dist_fwd[sc.from_edge] + nd
-                        if total < best: best = total; meeting_node = sc.from_edge
-                        
+                        if total < best:
+                            best = total
+                            meeting_node = sc.from_edge
+
         # Early termination
         if best < INF:
             b_fwd = min(min_arrival_fwd, pq_fwd[0][0] if pq_fwd else INF)
@@ -442,7 +522,8 @@ def query_bi_lca_res(source_edge: int, target_edge: int, data: ShortestPathData)
             if (pq_fwd and pq_fwd[0][0] + b_bwd >= best) and (pq_bwd and pq_bwd[0][0] + b_fwd >= best):
                 break
                 
-    if meeting_node is None: return -1.0, [], False
+    if meeting_node is None:
+        return -1.0, [], False
     return best, _reconstruct_bi(parent_fwd, parent_bwd, meeting_node), True
 
 # =============================================================================
@@ -467,7 +548,8 @@ def query_alternative(
     """
     if shortest_path_expanded is None:
         _, sp, success = query_uni_lca(source_edge, target_edge, data)
-        if not success: return -1.0, [], False
+        if not success:
+            return -1.0, [], False
         from .core import expand_path
         shortest_path_expanded = expand_path(sp, data.via_lookup)
     
@@ -489,8 +571,9 @@ def query_alternative(
     
     while pq:
         d, u, u_res, phase = heapq.heappop(pq)
-        if d > dist.get(u, INF): continue
-        
+        if d > dist.get(u, INF):
+            continue
+
         if u == target_edge:
             return d + data.edge_meta.get(target_edge, {}).get("cost", 0.0), _reconstruct_uni(parent, u), True
             
@@ -500,15 +583,26 @@ def query_alternative(
             
             # Phase transitions (same as query_uni_lca)
             if phase == 0 or phase == 1:
-                if sc.lca_res > high.res and sc.inside == 1: allowed = True; next_phase = 1
-                elif sc.lca_res <= high.res and sc.inside == 1: allowed = True; next_phase = 2
-                elif sc.inside != 1: allowed = True; next_phase = 2
+                if sc.lca_res > high.res and sc.inside == 1:
+                    allowed = True
+                    next_phase = 1
+                elif sc.lca_res <= high.res and sc.inside == 1:
+                    allowed = True
+                    next_phase = 2
+                elif sc.inside != 1:
+                    allowed = True
+                    next_phase = 2
             elif phase == 2:
-                if sc.inside != 1: allowed = True; next_phase = 3
+                if sc.inside != 1:
+                    allowed = True
+                    next_phase = 3
             elif phase == 3:
-                if sc.inside == -1: allowed = True; next_phase = 3
-                    
-            if not allowed: continue
+                if sc.inside == -1:
+                    allowed = True
+                    next_phase = 3
+
+            if not allowed:
+                continue
             
             # Apply penalty to edges overlapping with shortest path
             cost = sc.cost
@@ -570,7 +664,9 @@ def _m2m_classic(
     if common:
         for n in common:
             c = data.edge_meta.get(n, {}).get("cost", 0.0)
-            if c < best: best = c; meeting = n
+            if c < best:
+                best = c
+                meeting = n
             
     # Main loop: process BOTH queues per iteration (matching C++)
     while pq_fwd or pq_bwd:
@@ -578,12 +674,15 @@ def _m2m_classic(
         if pq_fwd:
             d, u = heapq.heappop(pq_fwd)
             
-            if d > dist_fwd.get(u, INF): pass  # Skip stale entry
-            elif d >= best: pass  # Per-node pruning (C++ line 772)
+            if d > dist_fwd.get(u, INF):  # Skip stale entry
+                pass
+            elif d >= best:  # Per-node pruning (C++ line 772)
+                pass
             else:
                 for sc in data.fwd_adj.get(u, []):
-                    if inside_filter and sc.inside != 1: continue
-                    
+                    if inside_filter and sc.inside != 1:
+                        continue
+
                     cost = sc.cost
                     if penalty_set and (sc.to_edge in penalty_set or (sc.via_edge != 0 and sc.via_edge in penalty_set)):
                         cost *= penalty_factor
@@ -596,18 +695,23 @@ def _m2m_classic(
                         
                         if sc.to_edge in dist_bwd:
                             total = nd + dist_bwd[sc.to_edge]
-                            if total < best: best = total; meeting = sc.to_edge
-        
+                            if total < best:
+                                best = total
+                                meeting = sc.to_edge
+
         # Backward step
         if pq_bwd:
             d, u = heapq.heappop(pq_bwd)
-            
-            if d > dist_bwd.get(u, INF): pass  # Skip stale entry
-            elif d >= best: pass  # Per-node pruning (C++ line 805)
+
+            if d > dist_bwd.get(u, INF):  # Skip stale entry
+                pass
+            elif d >= best:  # Per-node pruning (C++ line 805)
+                pass
             else:
                 for sc in data.bwd_adj.get(u, []):
-                    if inside_filter and sc.inside not in [-1, 0]: continue
-                    
+                    if inside_filter and sc.inside not in [-1, 0]:
+                        continue
+
                     cost = sc.cost
                     if penalty_set and (sc.from_edge in penalty_set or (sc.via_edge != 0 and sc.via_edge in penalty_set)):
                         cost *= penalty_factor
@@ -620,16 +724,21 @@ def _m2m_classic(
                         
                         if sc.from_edge in dist_fwd:
                             total = dist_fwd[sc.from_edge] + nd
-                            if total < best: best = total; meeting = sc.from_edge
-        
+                            if total < best:
+                                best = total
+                                meeting = sc.from_edge
+
         # Early termination (C++ lines 836-840)
         if pq_fwd and pq_bwd:
-            if pq_fwd[0][0] >= best and pq_bwd[0][0] >= best: break
+            if pq_fwd[0][0] >= best and pq_bwd[0][0] >= best:
+                break
         elif not pq_fwd and not pq_bwd:
             break
-                        
-    if meeting is None: return -1.0, [], False
+
+    if meeting is None:
+        return -1.0, [], False
     return best, _reconstruct_bi(parent_fwd, parent_bwd, meeting), True
 
 # Aliases
-def query_pruned(s, t, d): return query_bi_lca_res(s, t, d)
+def query_pruned(s, t, d):
+    return query_bi_lca_res(s, t, d)

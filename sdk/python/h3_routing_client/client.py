@@ -1,9 +1,7 @@
 import requests
-import json
-import os
 import yaml
 from pathlib import Path
-from typing import List, Dict, Optional, Union
+from typing import List, Dict
 from dataclasses import dataclass
 
 
@@ -120,7 +118,7 @@ class RoutingClient:
             # Gateway has /server-status, Engine has /health
             resp = requests.get(f"{self.base_url}/server-status", timeout=1)
             return resp.status_code == 200
-        except:
+        except Exception:
             return False
 
     def health(self) -> Dict:
@@ -296,15 +294,18 @@ class RoutingClient:
                 print(f"Warning: Could not resolve paths for dataset '{name}' in local config.")
                 print(f"Available datasets: {list(self.dataset_registry.keys())}")
         
-        if db_path: payload["db_path"] = db_path
-        if shortcuts_path: payload["shortcuts_path"] = shortcuts_path
-        if edges_path: payload["edges_path"] = edges_path
+        if db_path:
+            payload["db_path"] = db_path
+        if shortcuts_path:
+            payload["shortcuts_path"] = shortcuts_path
+        if edges_path:
+            payload["edges_path"] = edges_path
             
         endpoint = "/load-dataset" if self.is_gateway else "/load_dataset"
         try:
             resp = requests.post(f"{self.base_url}{endpoint}", json=payload)
             return resp.status_code == 200
-        except:
+        except Exception:
             return False
 
     def unload_dataset(self, name: str) -> bool:
@@ -314,7 +315,7 @@ class RoutingClient:
         try:
             resp = requests.post(f"{self.base_url}{endpoint}", json=payload)
             return resp.status_code == 200
-        except:
+        except Exception:
             return False
 
     def nearest_edges(

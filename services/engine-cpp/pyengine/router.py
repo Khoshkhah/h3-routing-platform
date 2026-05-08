@@ -1,5 +1,5 @@
 import duckdb
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Optional, Dict, Any
 from .core import load_shortcut_data, expand_path, ShortestPathData
 from .algorithms import (
     query_uni_dijkstra,
@@ -17,7 +17,7 @@ class Router:
         # Open in read-only mode to prevent locking issues
         try:
             self.con = duckdb.connect(db_path, read_only=True)
-        except:
+        except Exception:
             self.con = duckdb.connect(db_path)
             
         self.data: ShortestPathData = load_shortcut_data(self.con)
@@ -56,7 +56,7 @@ class Router:
                     LIMIT {max_candidates}
                 """).fetchall()
                 return [res[0] for res in results]
-            except:
+            except Exception:
                 pass
 
             return []

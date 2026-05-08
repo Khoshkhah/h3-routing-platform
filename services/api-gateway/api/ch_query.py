@@ -1,10 +1,8 @@
 import requests
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import List, Optional
 import logging
-import json
 
 logger = logging.getLogger(__name__)
 

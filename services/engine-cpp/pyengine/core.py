@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple, Optional, Set, Any
+from typing import Dict, List, Tuple, Set, Any
 import duckdb
 import h3
 from dataclasses import dataclass
@@ -31,7 +31,7 @@ def load_shortcut_data(con: duckdb.DuckDBPyConnection) -> ShortestPathData:
         try:
             # H3 cell resolution calculation
             lca_res = h3.get_resolution(h3.int_to_str(cell_val)) if cell_val and cell_val != 0 else -1
-        except:
+        except Exception:
             lca_res = -1
             
         sc = Shortcut(

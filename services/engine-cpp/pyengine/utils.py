@@ -7,11 +7,13 @@ def str_to_int(h3_str: str) -> int:
     return h3.str_to_int(h3_str)
 
 def get_resolution(h3_int: int) -> int:
-    if h3_int == 0: return -1
+    if h3_int == 0:
+        return -1
     return h3.get_resolution(int_to_str(h3_int))
 
 def cell_to_parent(h3_int: int, res: int) -> int:
-    if h3_int == 0: return 0
+    if h3_int == 0:
+        return 0
     return str_to_int(h3.cell_to_parent(int_to_str(h3_int), res))
 
 def find_lca(cell1: int, cell2: int) -> int:

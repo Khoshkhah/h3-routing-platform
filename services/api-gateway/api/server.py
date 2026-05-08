@@ -9,10 +9,11 @@ This server provides REST API endpoints for:
 
 import json
 import logging
-import subprocess
-import sys
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
+
+import requests
 
 import yaml
 from fastapi import FastAPI, HTTPException, Query
@@ -91,9 +92,6 @@ class RouteResponse(BaseModel):
 
 
 
-import requests
-import time
-
 def load_config(config_path: str = "config/datasets.yaml"):
     """Load dataset configuration from YAML file and initialize C++ server."""
     config_file = Path(config_path)
@@ -154,11 +152,16 @@ def load_config(config_path: str = "config/datasets.yaml"):
 
         # Resolve variables using the full context (project_root + paths)
         if resolution_context:
-            if db_path: db_path = db_path.format(**resolution_context)
-            if shortcuts_path: shortcuts_path = shortcuts_path.format(**resolution_context)
-            if edges_path: edges_path = edges_path.format(**resolution_context)
-            if binary_path: binary_path = binary_path.format(**resolution_context)
-            if boundary_path: boundary_path = boundary_path.format(**resolution_context)
+            if db_path:
+                db_path = db_path.format(**resolution_context)
+            if shortcuts_path:
+                shortcuts_path = shortcuts_path.format(**resolution_context)
+            if edges_path:
+                edges_path = edges_path.format(**resolution_context)
+            if binary_path:
+                binary_path = binary_path.format(**resolution_context)
+            if boundary_path:
+                boundary_path = boundary_path.format(**resolution_context)
             # Store resolved boundary path back in dataset info
             ds['boundary_path'] = boundary_path
         

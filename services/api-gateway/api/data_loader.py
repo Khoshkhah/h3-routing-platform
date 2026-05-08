@@ -11,14 +11,13 @@ import logging
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple, List, Any
+from typing import Dict, Optional, Tuple, Any
 
 import pandas as pd
 import duckdb
 from rtree import index
 from shapely import wkt
 from shapely.geometry import LineString, Point
-from shapely.ops import nearest_points
 
 logger = logging.getLogger(__name__)
 
@@ -312,7 +311,8 @@ class DatasetRegistry:
                     if not info.get('boundary'):
                         try:
                             info['boundary'] = json.loads(data[0]) if isinstance(data[0], str) else data[0]
-                        except: pass
+                        except Exception:
+                            pass
                     if not info.get('center'):
                         info['center'] = [data[1], data[2]]
                     if not info.get('zoom'):
@@ -329,7 +329,8 @@ class DatasetRegistry:
                         # We just need a rough center, maybe sample or use bounds if DuckDB 1.1+ (ST_Extent)
                         # For now, let's keep it simple and just use the first edge as a hint or skip
                         pass
-                except: pass
+                except Exception:
+                    pass
 
             con.close()
         except Exception as e:
