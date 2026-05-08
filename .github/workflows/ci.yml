@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  python-lint:
+    name: Python Lint
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' ||
+      contains(toJson(github.event.commits), 'sdk/python') ||
+      contains(toJson(github.event.commits), 'services/api-gateway/api') ||
+      contains(toJson(github.event.commits), 'services/engine-cpp/pyengine')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install ruff
+
+      - name: Lint Python SDK
+        run: ruff check sdk/python/
+
+      - name: Lint API Gateway
+        run: ruff check services/api-gateway/api/
+
+      - name: Lint pyengine
+        run: ruff check services/engine-cpp/pyengine/
+
+  cpp-build:
+    name: C++ Build
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' ||
+      contains(toJson(github.event.commits), 'services/engine-cpp/cpp')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake build-essential \
+            libboost-system-dev libboost-filesystem-dev \
+            libarrow-dev libparquet-dev
+
+      - name: Cache H3 build
+        uses: actions/cache@v4
+        id: cache-h3
+        with:
+          path: /usr/local/lib/libh3*
+          key: h3-v4.1.0
+
+      - name: Build and install H3
+        if: steps.cache-h3.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth=1 --branch v4.1.0 https://github.com/uber/h3.git /tmp/h3
+          cmake -S /tmp/h3 -B /tmp/h3/build \
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_DOCS=OFF \
+            -DBUILD_TESTING=OFF
+          sudo cmake --build /tmp/h3/build -j$(nproc)
+          sudo cmake --install /tmp/h3/build
+
+      - name: Build C++ engine
+        run: |
+          cmake -S services/engine-cpp/cpp -B services/engine-cpp/cpp/build \
+            -DCMAKE_PREFIX_PATH=/usr/local \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build services/engine-cpp/cpp/build -j$(nproc)
